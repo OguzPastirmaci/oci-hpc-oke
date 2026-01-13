@@ -23,7 +23,7 @@ module "nginx" {
   ]
   post_deployment_commands = flatten([
     "cat <<'EOF' | kubectl apply -f -",
-    ( var.use_lets_encrypt_prod_endpoint == true ? 
+    (var.use_lets_encrypt_prod_endpoint == true ?
       split("\n", file("${path.module}/files/cert-manager/cluster-issuer-prod.yaml")) :
       split("\n", file("${path.module}/files/cert-manager/cluster-issuer-staging.yaml"))
     ),
@@ -98,7 +98,7 @@ module "kube_prometheus_stack" {
 
   post_deployment_commands = []
 
-  helm_template_values_override = templatefile("${path.module}/files/kube-prometheus/values.yaml.tftpl", { preferred_kubernetes_services = var.preferred_kubernetes_services})
+  helm_template_values_override = templatefile("${path.module}/files/kube-prometheus/values.yaml.tftpl", { preferred_kubernetes_services = var.preferred_kubernetes_services })
 
   helm_user_values_override = yamlencode(
     {
@@ -107,14 +107,14 @@ module "kube_prometheus_stack" {
           adminPassword = random_password.grafana_admin_password.result
         },
         var.preferred_kubernetes_services == "internal" ?
-        { 
+        {
           service = {
             annotations = {
-              "oci.oraclecloud.com/initial-freeform-tags-override": jsonencode({"state_id"=local.state_id, "application": "grafana"})
+              "oci.oraclecloud.com/initial-freeform-tags-override" : jsonencode({ "state_id" = local.state_id, "application" : "grafana" })
             }
           }
-        } : {})
-      }
+      } : {})
+    }
   )
   depends_on = [module.nginx]
 }
@@ -272,7 +272,7 @@ module "oke-ons-webhook" {
   post_deployment_commands = []
 
   helm_template_values_override = ""
-  helm_user_values_override     = yamlencode({
+  helm_user_values_override = yamlencode({
     deploy = {
       env = {
         ONS_TOPIC_OCID           = try(oci_ons_notification_topic.grafana_alerts[0].id, "")

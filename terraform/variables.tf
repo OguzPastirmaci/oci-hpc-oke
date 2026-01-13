@@ -69,7 +69,7 @@ variable "workers_sn_id" { default = null }
 variable "pods_sn_id" { default = null }
 variable "fss_sn_id" { default = null }
 variable "lustre_sn_id" { default = null }
-variable "subnet_advanced_attrs" { 
+variable "subnet_advanced_attrs" {
   default = {}
   type    = any
 }
@@ -340,10 +340,10 @@ variable "worker_ops_boot_volume_size" { default = 128 }
 variable "worker_ops_image_type" { default = "Custom" }
 variable "worker_ops_image_custom_id" { default = "" }
 variable "worker_ops_image_custom_uri" { default = "" }
-variable "worker_ops_image_use_uri" { 
-  default = false 
+variable "worker_ops_image_use_uri" {
+  default = false
   type    = bool
-} 
+}
 
 # Workers - CPU pool
 variable "worker_cpu_enabled" { default = false }
@@ -362,10 +362,10 @@ variable "worker_cpu_image_custom_uri" {
   default = null
   type    = string
 }
-variable "worker_cpu_image_use_uri" { 
-  default = false 
+variable "worker_cpu_image_use_uri" {
+  default = false
   type    = bool
-} 
+}
 variable "worker_cpu_image_id" { default = "" }
 variable "worker_cpu_image_os" { default = "Oracle Linux" }
 variable "worker_cpu_image_os_version" { default = "8" }
@@ -389,10 +389,10 @@ variable "worker_gpu_image_custom_uri" {
   default = null
   type    = string
 }
-variable "worker_gpu_image_use_uri" { 
-  default = false 
+variable "worker_gpu_image_use_uri" {
+  default = false
   type    = bool
-} 
+}
 variable "worker_gpu_image_os" { default = "Oracle Linux" }
 variable "worker_gpu_image_os_version" { default = "8" }
 variable "worker_gpu_image_platform_id" {
@@ -423,10 +423,10 @@ variable "worker_rdma_image_custom_uri" {
   default = null
   type    = string
 }
-variable "worker_rdma_image_use_uri" { 
-  default = false 
+variable "worker_rdma_image_use_uri" {
+  default = false
   type    = bool
-} 
+}
 variable "worker_rdma_image_id" { default = "" }
 
 # K8s resources deployment method

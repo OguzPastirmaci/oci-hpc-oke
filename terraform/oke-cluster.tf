@@ -45,8 +45,8 @@ locals {
 
   nsgs = merge(
     {
-      bastion  = var.create_bastion ? { create = "auto" } : { create = "never"}
-      operator = var.create_operator ? { create = "auto" } : { create = "never"}
+      bastion  = var.create_bastion ? { create = "auto" } : { create = "never" }
+      operator = var.create_operator ? { create = "auto" } : { create = "never" }
       int_lb   = { create = "auto" }
       pub_lb   = { create = "auto" }
       cp       = { create = "auto" }

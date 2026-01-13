@@ -7,7 +7,7 @@ locals {
   invalid_bastion                = !var.create_public_subnets && var.create_bastion
   invalid_worker_rdma_image      = can(regex("(?i)oracle.*linux", one(data.oci_core_image.worker_rdma[*].display_name)))
   invalid_gb200_shape            = contains(["BM.GPU.GB200.4", "BM.GPU.GB200-v2.4"], var.worker_rdma_shape)
-  invalid_image_uri              = anytrue([
+  invalid_image_uri = anytrue([
     var.worker_ops_image_use_uri && !startswith(coalesce(var.worker_ops_image_custom_uri, "none"), "http"),
     var.worker_cpu_image_use_uri && !startswith(coalesce(var.worker_cpu_image_custom_uri, "none"), "http"),
     var.worker_gpu_image_use_uri && !startswith(coalesce(var.worker_gpu_image_custom_uri, "none"), "http"),
