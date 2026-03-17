@@ -2,6 +2,7 @@
 set -euo pipefail
 
 if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
     . /etc/os-release
 else
     echo "Cannot detect OS: /etc/os-release missing"

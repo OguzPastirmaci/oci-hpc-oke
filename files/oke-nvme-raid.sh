@@ -9,6 +9,7 @@ mount_primary="${3:-/mnt/nvme}"
 mount_extra=(/var{/lib/containers,/lib/kubelet,/log/pods})
 
 # Enumerate NVMe devices, exit if absent
+# shellcheck disable=SC2206
 devices=($pattern)
 if [ ${#devices[@]} -eq 0 ]; then
   echo "No NVMe devices" >&2
@@ -17,6 +18,7 @@ fi
 
 # Exit if cannot detect OS (Ubuntu and Oracle Linux are supported)
 if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
     . /etc/os-release
 else
     echo "Cannot detect OS: /etc/os-release missing"
