@@ -178,7 +178,7 @@ locals {
 
 module "oke" {
   source  = "oracle-terraform-modules/oke/oci"
-  version = "5.4.1"
+  version = "5.4.2"
 
   providers = { oci.home = oci.home }
 
