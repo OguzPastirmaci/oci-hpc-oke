@@ -208,3 +208,43 @@ jobs:
           TFVARS_FILE: ${{ matrix.tfvars }}
         run: go test -v -count=1 -run TestPlanSmoke -timeout 15m ./...
 
+  # ---------------------------------------------------------------------------
+  # Summary: post a single comment to the PR with pass/fail for every job and
+  # a direct link to the run log. Runs even if upstream jobs fail.
+  # ---------------------------------------------------------------------------
+  summarize:
+    name: Post results
+    needs: [check-changes, validate, plan]
+    if: always() && needs.check-changes.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post result comment
+        uses: actions/github-script@v7
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const icon = (r) => r === 'success' ? '✅' : r === 'skipped' ? '⏭️' : '❌'
+            const validate = process.env.VALIDATE_RESULT
+            const plan     = process.env.PLAN_RESULT
+            const runUrl   = process.env.RUN_URL
+            const overall  = (validate === 'success' || validate === 'skipped') &&
+                             (plan     === 'success' || plan     === 'skipped')
+            const body = [
+              `### ${overall ? '✅' : '❌'} CI - Plan results`,
+              '',
+              `| Job | Result |`,
+              `|-----|--------|`,
+              `| Validation tests | ${icon(validate)} ${validate} |`,
+              `| Plan smoke tests | ${icon(plan)} ${plan} |`,
+              '',
+              `[View full run log](${runUrl})`,
+            ].join('\n')
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            })
