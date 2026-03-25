@@ -30,6 +30,7 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  GIT_TEMPLATE_DIR: ""  # workaround for missing git hook templates on ubuntu-24.04 runners
 
 permissions:
   contents: read
