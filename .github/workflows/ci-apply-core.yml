@@ -1,4 +1,4 @@
-name: CI - Apply (Core)
+name: CI - Apply (Terraform)
 
 on:
   workflow_dispatch:
@@ -28,7 +28,7 @@ on:
 # provision duplicate clusters and leave orphaned resources if cancelled.
 # PR-triggered runs get their own concurrency group per PR number.
 concurrency:
-  group: ${{ github.event_name == 'issue_comment' && format('ci-apply-core-pr-{0}', github.event.issue.number) || 'ci-apply-core' }}
+  group: ${{ github.event_name == 'issue_comment' && format('ci-apply-terraform-pr-{0}', github.event.issue.number) || 'ci-apply-terraform' }}
   cancel-in-progress: false
 
 env:
@@ -78,8 +78,8 @@ jobs:
           fi
           echo "tfvars=$tfvars" >> "$GITHUB_OUTPUT"
 
-  apply-core:
-    name: Core provisioning
+  apply-terraform:
+    name: Terraform provisioning
     needs: [check-apply-trigger]
     # Run for workflow_dispatch (gate is skipped) or after a successful gate
     if: always() && (github.event_name == 'workflow_dispatch' || needs.check-apply-trigger.result == 'success')
@@ -127,7 +127,7 @@ jobs:
           printf '%s' "$OCI_API_KEY_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem ~/.oci/config
 
-      - name: Run core provisioning test
+      - name: Run Terraform provisioning test
         working-directory: test
         env:
           OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
