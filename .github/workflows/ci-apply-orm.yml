@@ -309,6 +309,18 @@ jobs:
             echo "OK:   cluster_private_endpoint = $PRIVATE_EP"
           fi
 
+          if [ "$TOPOLOGY" = "all-public-orm" ]; then
+            PUBLIC_EP=$(jq -r '.outputs.cluster_public_endpoint.value // empty' state.json)
+            if [[ "$PUBLIC_EP" != https://* ]]; then
+              echo "FAIL: cluster_public_endpoint does not start with https://: $PUBLIC_EP"
+              FAILED=1
+            else
+              echo "OK:   cluster_public_endpoint = $PUBLIC_EP"
+            fi
+            check_ocid pub_lb_subnet_id
+            check_ocid pub_lb_nsg_id
+          fi
+
           if [ "$TOPOLOGY" = "all-private-bastion-service-orm" ]; then
             check_ocid bastion_service_id
           fi
