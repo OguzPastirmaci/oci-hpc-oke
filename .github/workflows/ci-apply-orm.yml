@@ -213,7 +213,7 @@ jobs:
           STACK_ID=$(oci resource-manager stack create \
             --compartment-id "$OCI_COMPARTMENT_OCID" \
             --display-name "ci-orm-${GITHUB_RUN_ID}-${TOPOLOGY}" \
-            --config-source file://config-source.json \
+            --config-source "file://$PWD/config-source.json" \
             --variables "$(cat variables.json)" \
             --terraform-version "1.5.x" \
             --region "$OCI_REGION" \
