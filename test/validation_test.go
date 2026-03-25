@@ -69,6 +69,15 @@ var validationTestCases = []validationTestCase{
 		},
 		expectedError: "GB200 shapes",
 	},
+	{
+		name: "PodCapacityExceeded",
+		vars: map[string]interface{}{
+			// /30 subnet = 4 IPs - 3 reserved = 1 usable
+			// default ops pool: 1 node × 31 pods = 31 required > 1 capacity
+			"pods_sn_cidr": "10.240.0.0/30",
+		},
+		expectedError: "Total required pod IPs",
+	},
 }
 
 // TestValidation runs all validation test cases in parallel using table-driven tests
