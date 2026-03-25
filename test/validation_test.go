@@ -49,6 +49,30 @@ var validationTestCases = []validationTestCase{
 		expectedError: "Invalid image URI detected",
 	},
 	{
+		name: "InvalidCpuImageURI",
+		vars: map[string]interface{}{
+			"worker_cpu_image_use_uri":    true,
+			"worker_cpu_image_custom_uri": "not-a-url",
+		},
+		expectedError: "Invalid image URI detected",
+	},
+	{
+		name: "InvalidGpuImageURI",
+		vars: map[string]interface{}{
+			"worker_gpu_image_use_uri":    true,
+			"worker_gpu_image_custom_uri": "not-a-url",
+		},
+		expectedError: "Invalid image URI detected",
+	},
+	{
+		name: "InvalidRdmaImageURI",
+		vars: map[string]interface{}{
+			"worker_rdma_image_use_uri":    true,
+			"worker_rdma_image_custom_uri": "not-a-url",
+		},
+		expectedError: "Invalid image URI detected",
+	},
+	{
 		name: "GB200ShapeBlocked",
 		vars: map[string]interface{}{
 			"worker_rdma_shape": "BM.GPU.GB200.4",
