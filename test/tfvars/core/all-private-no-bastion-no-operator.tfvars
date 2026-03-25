@@ -8,7 +8,6 @@ create_public_subnets = false
 
 cni_type = "VCN-Native Pod Networking"
 
-create_bv_high = false
 create_fss     = false
 create_lustre  = false
 

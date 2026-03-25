@@ -1,7 +1,6 @@
 create_bastion  = false
 create_operator = false
 
-create_bv_high = false
 create_fss     = false
 create_lustre  = false
 
