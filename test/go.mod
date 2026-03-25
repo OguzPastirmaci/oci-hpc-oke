@@ -1,6 +1,6 @@
 module github.com/oracle-quickstart/oci-hpc-oke/test
 
-go 1.24
+go 1.26
 
 require (
 	github.com/gruntwork-io/terratest v0.48.0
