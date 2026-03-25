@@ -66,7 +66,11 @@ func TestValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
+			// Each parallel subtest gets its own copy of the terraform directory
+			// to prevent concurrent terraform init calls from racing on lock files.
+			tmpDir := copyTerraformToTemp(t)
 			options := newTerraformOptions(t, tc.vars)
+			options.TerraformDir = tmpDir
 			assertPlanFailsWithError(t, options, tc.expectedError)
 		})
 	}

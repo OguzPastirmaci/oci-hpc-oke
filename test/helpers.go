@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -272,4 +273,49 @@ func setIfNotEmpty(vars map[string]interface{}, key, value string) {
 // Format: ocid1.<resource-type>.<realm>.[region][.future-use].<unique-id>
 func isValidOCID(s string) bool {
 	return strings.HasPrefix(s, "ocid1.") && strings.Count(s, ".") >= 4
+}
+
+// copyTerraformToTemp copies the terraform directory to a per-test temp directory,
+// excluding .terraform/ (provider cache), so parallel subtests each get an isolated
+// working directory and don't race on terraform init lock files.
+func copyTerraformToTemp(t *testing.T) string {
+	t.Helper()
+	src := terraformDir()
+	dst := t.TempDir()
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(src, path)
+		if relErr != nil {
+			return relErr
+		}
+		if info.IsDir() && info.Name() == ".terraform" {
+			return filepath.SkipDir
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		return copyFile(path, target)
+	})
+	if err != nil {
+		t.Fatalf("failed to copy terraform dir to temp: %v", err)
+	}
+	return dst
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
