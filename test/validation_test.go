@@ -55,6 +55,20 @@ var validationTestCases = []validationTestCase{
 		},
 		expectedError: "GB200 shapes",
 	},
+	{
+		name: "GB200v2ShapeBlocked",
+		vars: map[string]interface{}{
+			"worker_rdma_shape": "BM.GPU.GB200-v2.4",
+		},
+		expectedError: "GB200 shapes",
+	},
+	{
+		name: "GB200v3ShapeBlocked",
+		vars: map[string]interface{}{
+			"worker_rdma_shape": "BM.GPU.GB200-v3.4",
+		},
+		expectedError: "GB200 shapes",
+	},
 }
 
 // TestValidation runs all validation test cases in parallel using table-driven tests
