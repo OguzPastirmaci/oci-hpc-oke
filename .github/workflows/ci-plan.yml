@@ -200,3 +200,4 @@ jobs:
           SSH_PUBLIC_KEY: ${{ vars.SSH_PUBLIC_KEY }}
           TFVARS_FILE: ${{ matrix.tfvars }}
         run: go test -v -count=1 -run TestPlanSmoke -timeout 15m ./...
+
