@@ -10,10 +10,10 @@ on:
         default: "tfvars/core/cluster-only.tfvars"
         options:
           - tfvars/core/cluster-only.tfvars
-          - tfvars/core/all-public-no-bastion-no-operator.tfvars
           - tfvars/core/all-public-bastion-operator.tfvars
-          - tfvars/core/all-private-no-bastion-no-operator.tfvars
+          - tfvars/core/all-private.tfvars
           - tfvars/core/all-private-operator.tfvars
+          - tfvars/core/all-private-bastion-service.tfvars
           - tfvars/core/cluster-only.tfvars,tfvars/monitoring/monitoring.tfvars
           - tfvars/core/cluster-only.tfvars,tfvars/storage/fss.tfvars
           - tfvars/core/cluster-only.tfvars,tfvars/storage/lustre.tfvars

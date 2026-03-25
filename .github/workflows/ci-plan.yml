@@ -138,16 +138,16 @@ jobs:
       matrix:
         include:
           # Core network / access patterns
-          - name: minimal
+          - name: cluster-only
             tfvars: tfvars/core/cluster-only.tfvars
-          - name: all-private-no-bastion
-            tfvars: tfvars/core/all-private-no-bastion-no-operator.tfvars
-          - name: all-private-operator
-            tfvars: tfvars/core/all-private-operator.tfvars
-          - name: all-public-no-bastion
-            tfvars: tfvars/core/all-public-no-bastion-no-operator.tfvars
           - name: all-public-bastion-operator
             tfvars: tfvars/core/all-public-bastion-operator.tfvars
+          - name: all-private
+            tfvars: tfvars/core/all-private.tfvars
+          - name: all-private-operator
+            tfvars: tfvars/core/all-private-operator.tfvars
+          - name: all-private-bastion-service
+            tfvars: tfvars/core/all-private-bastion-service.tfvars
           # Add-on components layered on top of the minimal cluster config
           - name: monitoring
             tfvars: tfvars/core/cluster-only.tfvars,tfvars/monitoring/monitoring.tfvars
