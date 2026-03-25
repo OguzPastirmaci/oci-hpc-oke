@@ -18,6 +18,11 @@ install_node_problem_detector_kube_prometheus_stack = false
 install_grafana                                = false
 install_grafana_dashboards                     = false
 install_nvidia_dcgm_exporter                   = false
+install_mpi_operator                           = false
+install_kueue                                  = false
+install_oci_hpc_oke_utils                      = false
+install_rdma_labeler                           = false
+install_lustre_client                          = false
 install_amd_device_metrics_exporter            = false
 setup_alerting                                 = false
 
