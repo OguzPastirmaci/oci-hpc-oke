@@ -71,7 +71,6 @@ func baseVars(t *testing.T, opts baseVarsOptions) map[string]interface{} {
 
 	if opts.includeDefaults {
 		vars["create_bastion"] = false
-		vars["create_bv_high"] = false
 		vars["create_fss"] = false
 		vars["create_lustre"] = false
 		vars["create_operator"] = false
