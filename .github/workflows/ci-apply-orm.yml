@@ -203,19 +203,32 @@ jobs:
           OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
-          python3 -c "
-          import base64, json
+          python3 - <<'EOF'
+          import base64, json, os
+
           with open('stack.zip', 'rb') as f:
-              encoded = base64.b64encode(f.read()).decode()
-          print(json.dumps({'configSourceType': 'ZIP_UPLOAD', 'zipFileBase64Encoded': encoded}))
-          " > config-source.json
+              zip_b64 = base64.b64encode(f.read()).decode()
+
+          with open('variables.json') as f:
+              variables = json.load(f)
+
+          request = {
+              'compartmentId':   os.environ['OCI_COMPARTMENT_OCID'],
+              'displayName':     'ci-orm-{}-{}'.format(os.environ['GITHUB_RUN_ID'], os.environ['TOPOLOGY']),
+              'configSource': {
+                  'configSourceType':    'ZIP_UPLOAD',
+                  'zipFileBase64Encoded': zip_b64,
+              },
+              'variables':       variables,
+              'terraformVersion': '1.5.x',
+          }
+
+          with open('create-stack-request.json', 'w') as f:
+              json.dump(request, f)
+          EOF
 
           STACK_ID=$(oci resource-manager stack create \
-            --compartment-id "$OCI_COMPARTMENT_OCID" \
-            --display-name "ci-orm-${GITHUB_RUN_ID}-${TOPOLOGY}" \
-            --config-source "$(cat config-source.json)" \
-            --variables "$(cat variables.json)" \
-            --terraform-version "1.5.x" \
+            --from-json "file://$PWD/create-stack-request.json" \
             --region "$OCI_REGION" \
             --query 'data.id' \
             --raw-output)
