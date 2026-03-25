@@ -1,7 +1,6 @@
 name: CI - Apply (Core)
 
 on:
-  # Manual trigger only for now. Uncomment the schedule block to run nightly.
   workflow_dispatch:
     inputs:
       tfvars:
@@ -19,13 +18,17 @@ on:
           - tfvars/core/cluster-only.tfvars,tfvars/storage/fss.tfvars
           - tfvars/core/cluster-only.tfvars,tfvars/storage/lustre.tfvars
 
+  issue_comment:
+    types: [created]
+
   # schedule:
   #   - cron: '0 2 * * 1-5'  # Weeknights at 02:00 UTC
 
 # Never run two apply jobs at the same time — parallel apply jobs would
 # provision duplicate clusters and leave orphaned resources if cancelled.
+# PR-triggered runs get their own concurrency group per PR number.
 concurrency:
-  group: ci-apply-core
+  group: ${{ github.event_name == 'issue_comment' && format('ci-apply-core-pr-{0}', github.event.issue.number) || 'ci-apply-core' }}
   cancel-in-progress: false
 
 env:
@@ -34,16 +37,46 @@ env:
 
 permissions:
   contents: read
+  pull-requests: write  # needed to post the rocket reaction on the trigger comment
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Gate: verify the /ok-to-apply comment is authorized. Skipped entirely for
+  # workflow_dispatch so the apply job runs unconditionally in that case.
+  # ---------------------------------------------------------------------------
+  check-apply-trigger:
+    name: Check apply trigger
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/ok-to-apply') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: React to trigger comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket'
+            })
+
   apply-core:
     name: Core provisioning
+    needs: [check-apply-trigger]
+    # Run for workflow_dispatch (gate is skipped) or after a successful gate
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.check-apply-trigger.result == 'success')
     runs-on: ubuntu-latest
     # Generous timeout: cluster create ~45 min + Helm deploys + destroy ~20 min
     timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -89,5 +122,5 @@ jobs:
           WORKER_OPS_AD: ${{ vars.WORKER_OPS_AD }}
           WORKER_OPS_IMAGE_CUSTOM_ID: ${{ vars.WORKER_OPS_IMAGE_CUSTOM_ID }}
           SSH_PUBLIC_KEY: ${{ vars.SSH_PUBLIC_KEY }}
-          TFVARS_FILE: ${{ inputs.tfvars }}
+          TFVARS_FILE: ${{ inputs.tfvars || 'tfvars/core/cluster-only.tfvars' }}
         run: go test -v -count=1 -run TestCoreProvisioning -timeout 150m ./...
