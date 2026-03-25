@@ -129,7 +129,7 @@ jobs:
   # All matrix jobs run in parallel; a single failure does not stop the others.
   # ---------------------------------------------------------------------------
   plan:
-    name: Plan / ${{ matrix.name }}
+    name: TF Plan / ${{ matrix.name }}
     needs: check-changes
     if: needs.check-changes.outputs.run-tests == 'true'
     runs-on: ubuntu-latest
@@ -196,7 +196,7 @@ jobs:
           printf '%s' "$OCI_API_KEY_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem ~/.oci/config
 
-      - name: Run plan smoke test
+      - name: Run TF plan test
         working-directory: test
         env:
           OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
@@ -238,7 +238,7 @@ jobs:
               `| Job | Result |`,
               `|-----|--------|`,
               `| Validation tests | ${icon(validate)} ${validate} |`,
-              `| Plan smoke tests | ${icon(plan)} ${plan} |`,
+              `| TF plan tests    | ${icon(plan)} ${plan} |`,
               '',
               `[View full run log](${runUrl})`,
             ].join('\n')
