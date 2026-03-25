@@ -1,0 +1,89 @@
+name: CI - Apply (Core)
+
+on:
+  # Manual trigger only for now. Uncomment the schedule block to run nightly.
+  workflow_dispatch:
+    inputs:
+      tfvars:
+        description: "tfvars configuration to apply"
+        required: true
+        type: choice
+        default: "tfvars/core/cluster-only.tfvars"
+        options:
+          - tfvars/core/cluster-only.tfvars
+          - tfvars/core/all-public-no-bastion-no-operator.tfvars
+          - tfvars/core/all-public-bastion-operator.tfvars
+          - tfvars/core/all-private-no-bastion-no-operator.tfvars
+          - tfvars/core/all-private-operator.tfvars
+          - tfvars/core/cluster-only.tfvars,tfvars/monitoring/monitoring.tfvars
+          - tfvars/core/cluster-only.tfvars,tfvars/storage/fss.tfvars
+          - tfvars/core/cluster-only.tfvars,tfvars/storage/lustre.tfvars
+
+  # schedule:
+  #   - cron: '0 2 * * 1-5'  # Weeknights at 02:00 UTC
+
+# Never run two apply jobs at the same time — parallel apply jobs would
+# provision duplicate clusters and leave orphaned resources if cancelled.
+concurrency:
+  group: ci-apply-core
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  apply-core:
+    name: Core provisioning
+    runs-on: ubuntu-latest
+    # Generous timeout: cluster create ~45 min + Helm deploys + destroy ~20 min
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: test/go.mod
+          cache: true
+          cache-dependency-path: test/go.sum
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: terraform/.terraform
+          key: terraform-${{ hashFiles('terraform/versions.tf', 'terraform/.terraform.lock.hcl') }}
+          restore-keys: terraform-
+
+      - name: Set up OCI credentials
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_API_KEY_FINGERPRINT: ${{ secrets.OCI_API_KEY_FINGERPRINT }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_API_KEY_PRIVATE_KEY: ${{ secrets.OCI_API_KEY_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.oci
+          printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=%s\n' \
+            "$OCI_USER_OCID" \
+            "$OCI_API_KEY_FINGERPRINT" \
+            "$OCI_TENANCY_OCID" \
+            "$OCI_REGION" \
+            "$HOME/.oci/oci_api_key.pem" > ~/.oci/config
+          printf '%s' "$OCI_API_KEY_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem ~/.oci/config
+
+      - name: Run core provisioning test
+        working-directory: test
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          WORKER_OPS_AD: ${{ vars.WORKER_OPS_AD }}
+          WORKER_OPS_IMAGE_CUSTOM_ID: ${{ vars.WORKER_OPS_IMAGE_CUSTOM_ID }}
+          SSH_PUBLIC_KEY: ${{ vars.SSH_PUBLIC_KEY }}
+          TFVARS_FILE: ${{ inputs.tfvars }}
+        run: go test -v -count=1 -run TestCoreProvisioning -timeout 150m ./...

@@ -1,6 +1,5 @@
 create_bastion  = false
 create_operator = false
-create_policies = false
 
 create_bv_high = false
 create_fss     = false

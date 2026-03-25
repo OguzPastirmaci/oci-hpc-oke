@@ -1,5 +1,3 @@
-create_policies = false
-
 create_bastion  = true
 bastion_is_public = true
 create_operator = true
