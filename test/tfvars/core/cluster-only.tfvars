@@ -1,3 +1,7 @@
+create_public_subnets         = true
+control_plane_is_public       = true
+preferred_kubernetes_services = "public"
+
 create_bastion  = false
 create_operator = false
 

@@ -223,12 +223,19 @@ jobs:
       - name: Wait for apply to complete
         run: |
           echo "Waiting for apply job $APPLY_JOB_ID..."
+          MAX_POLLS=120  # 120 x 30s = 60 minutes
+          POLL=0
           while true; do
+            POLL=$((POLL + 1))
+            if [ "$POLL" -gt "$MAX_POLLS" ]; then
+              echo "Timed out waiting for apply job after $MAX_POLLS polls"
+              exit 1
+            fi
             STATUS=$(oci resource-manager job get \
               --job-id "$APPLY_JOB_ID" \
               --query 'data."lifecycle-state"' \
               --raw-output)
-            echo "  Status: $STATUS"
+            echo "  [$POLL/$MAX_POLLS] Status: $STATUS"
             case "$STATUS" in
               SUCCEEDED) echo "Apply succeeded."; break ;;
               FAILED|CANCELING|CANCELED)
@@ -294,6 +301,16 @@ jobs:
             check_ocid pub_lb_nsg_id
           fi
 
+          if [ "$TOPOLOGY" = "all-private-orm" ] || [ "$TOPOLOGY" = "all-private-bastion-service-orm" ]; then
+            PUBLIC_EP=$(jq -r '.outputs.cluster_public_endpoint.value // empty' state.json)
+            if [ -n "$PUBLIC_EP" ]; then
+              echo "FAIL: cluster_public_endpoint should be empty for private topology: $PUBLIC_EP"
+              FAILED=1
+            else
+              echo "OK:   cluster_public_endpoint is empty (private topology)"
+            fi
+          fi
+
           if [ "$TOPOLOGY" = "all-private-bastion-service-orm" ]; then
             check_ocid bastion_service_id
           fi
@@ -315,12 +332,19 @@ jobs:
         if: always() && env.DESTROY_JOB_ID != ''
         run: |
           echo "Waiting for destroy job $DESTROY_JOB_ID..."
+          MAX_POLLS=120
+          POLL=0
           while true; do
+            POLL=$((POLL + 1))
+            if [ "$POLL" -gt "$MAX_POLLS" ]; then
+              echo "Timed out waiting for destroy job after $MAX_POLLS polls"
+              exit 1
+            fi
             STATUS=$(oci resource-manager job get \
               --job-id "$DESTROY_JOB_ID" \
               --query 'data."lifecycle-state"' \
               --raw-output)
-            echo "  Status: $STATUS"
+            echo "  [$POLL/$MAX_POLLS] Status: $STATUS"
             case "$STATUS" in
               SUCCEEDED) echo "Destroy succeeded."; break ;;
               FAILED|CANCELING|CANCELED)
