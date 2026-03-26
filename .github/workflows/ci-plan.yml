@@ -4,7 +4,7 @@ on:
   issue_comment:
     types: [created]
 
-# Cancel in-flight runs for the same PR when a new /ok-to-test is triggered
+# Cancel in-flight runs for the same PR when a new /ok-to-run-plan is triggered
 concurrency:
   group: ci-plan-${{ github.event.issue.number }}
   cancel-in-progress: true
@@ -26,7 +26,7 @@ jobs:
     name: Check changed files
     if: >-
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/ok-to-test') &&
+      contains(github.event.comment.body, '/ok-to-run-plan') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     outputs:
@@ -124,11 +124,11 @@ jobs:
         run: go test -v -count=1 -run TestValidation -timeout 30m ./...
 
   # ---------------------------------------------------------------------------
-  # Plan smoke tests: run terraform plan (no apply) across multiple config
-  # combinations to catch regressions before anything is provisioned.
+  # Terraform plan smoke tests: run terraform plan (no apply) across multiple
+  # config combinations to catch regressions before anything is provisioned.
   # All matrix jobs run in parallel; a single failure does not stop the others.
   # ---------------------------------------------------------------------------
-  plan:
+  plan-terraform:
     name: TF Plan / ${{ matrix.name }}
     needs: check-changes
     if: needs.check-changes.outputs.run-tests == 'true'
@@ -209,12 +209,217 @@ jobs:
         run: go test -v -count=1 -run TestPlanSmoke -timeout 15m ./...
 
   # ---------------------------------------------------------------------------
+  # ORM plan tests: create an ORM stack and run a plan job (no apply) for each
+  # network topology. Stack is deleted immediately after — no resources created.
+  # ---------------------------------------------------------------------------
+  plan-orm:
+    name: ORM Plan / ${{ matrix.topology }}
+    needs: check-changes
+    if: needs.check-changes.outputs.run-tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - topology: all-public-orm
+          - topology: all-private-orm
+          - topology: all-private-bastion-service-orm
+    env:
+      TOPOLOGY: ${{ matrix.topology }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+
+      - name: Install OCI CLI
+        run: pip install oci-cli --quiet
+
+      - name: Set up OCI credentials
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_API_KEY_FINGERPRINT: ${{ secrets.OCI_API_KEY_FINGERPRINT }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_API_KEY_PRIVATE_KEY: ${{ secrets.OCI_API_KEY_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.oci
+          printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=%s\n' \
+            "$OCI_USER_OCID" \
+            "$OCI_API_KEY_FINGERPRINT" \
+            "$OCI_TENANCY_OCID" \
+            "$OCI_REGION" \
+            "$HOME/.oci/oci_api_key.pem" > ~/.oci/config
+          printf '%s' "$OCI_API_KEY_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem ~/.oci/config
+
+      - name: Build variables JSON
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          WORKER_OPS_AD: ${{ vars.WORKER_OPS_AD }}
+          WORKER_OPS_IMAGE_CUSTOM_ID: ${{ vars.WORKER_OPS_IMAGE_CUSTOM_ID }}
+          SSH_PUBLIC_KEY: ${{ vars.SSH_PUBLIC_KEY }}
+        run: |
+          jq -n \
+            --arg tenancy_ocid               "$OCI_TENANCY_OCID" \
+            --arg region                     "$OCI_REGION" \
+            --arg compartment_ocid           "$OCI_COMPARTMENT_OCID" \
+            --arg current_user_ocid          "$OCI_USER_OCID" \
+            --arg worker_ops_ad              "$WORKER_OPS_AD" \
+            --arg worker_ops_image_custom_id "$WORKER_OPS_IMAGE_CUSTOM_ID" \
+            --arg ssh_public_key             "$SSH_PUBLIC_KEY" \
+            '{
+              tenancy_ocid:               $tenancy_ocid,
+              region:                     $region,
+              compartment_ocid:           $compartment_ocid,
+              current_user_ocid:          $current_user_ocid,
+              worker_ops_ad:              $worker_ops_ad,
+              worker_ops_image_custom_id: $worker_ops_image_custom_id,
+              ssh_public_key:             $ssh_public_key,
+              deploy_to_oke_from_orm:                             "true",
+              create_bastion:                                     "false",
+              create_operator:                                    "false",
+              create_fss:                                         "false",
+              create_lustre:                                      "false",
+              install_monitoring:                                 "false",
+              install_node_problem_detector_kube_prometheus_stack: "false",
+              install_grafana:                                    "false",
+              install_grafana_dashboards:                         "false",
+              install_nvidia_dcgm_exporter:                       "false",
+              install_amd_device_metrics_exporter:                "false",
+              install_mpi_operator:                               "false",
+              install_kueue:                                      "false",
+              install_oci_hpc_oke_utils:                          "false",
+              install_rdma_labeler:                               "false",
+              install_lustre_client:                              "false",
+              setup_alerting:                                     "false",
+              worker_cpu_enabled:                                 "false",
+              worker_gpu_enabled:                                 "false",
+              worker_rdma_enabled:                                "false"
+            }' > base-vars.json
+
+          case "$TOPOLOGY" in
+            all-public-orm)
+              echo '{
+                "create_public_subnets":         "true",
+                "control_plane_is_public":       "true",
+                "preferred_kubernetes_services": "public",
+                "create_oci_bastion_service":    "false"
+              }' > topology-vars.json
+              ;;
+            all-private-orm)
+              echo '{
+                "create_public_subnets":         "false",
+                "control_plane_is_public":       "false",
+                "preferred_kubernetes_services": "internal",
+                "create_oci_bastion_service":    "false"
+              }' > topology-vars.json
+              ;;
+            all-private-bastion-service-orm)
+              echo '{
+                "create_public_subnets":         "false",
+                "control_plane_is_public":       "false",
+                "preferred_kubernetes_services": "internal",
+                "create_oci_bastion_service":    "true"
+              }' > topology-vars.json
+              ;;
+          esac
+
+          jq -s '.[0] * .[1]' base-vars.json topology-vars.json > variables.json
+
+      - name: Zip Terraform directory
+        run: |
+          cd terraform
+          zip -r ../stack.zip . -x "*.terraform/*" -x "*.tfstate*"
+
+      - name: Create ORM stack
+        shell: python3 {0}
+        env:
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          import oci, base64, json, os
+
+          config = oci.config.from_file()
+          client = oci.resource_manager.ResourceManagerClient(config)
+
+          with open('stack.zip', 'rb') as f:
+              zip_b64 = base64.b64encode(f.read()).decode()
+
+          with open('variables.json') as f:
+              variables = json.load(f)
+
+          details = oci.resource_manager.models.CreateStackDetails(
+              compartment_id=os.environ['OCI_COMPARTMENT_OCID'],
+              display_name='ci-orm-plan-{}-{}'.format(
+                  os.environ['GITHUB_RUN_ID'],
+                  os.environ['TOPOLOGY']
+              ),
+              config_source=oci.resource_manager.models.CreateZipUploadConfigSourceDetails(
+                  config_source_type='ZIP_UPLOAD',
+                  zip_file_base64_encoded=zip_b64
+              ),
+              variables=variables,
+              terraform_version='1.5.x'
+          )
+
+          response = client.create_stack(details)
+          stack_id = response.data.id
+
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('STACK_ID={}\n'.format(stack_id))
+
+          print('Created stack: {}'.format(stack_id))
+
+      - name: Plan stack
+        run: |
+          PLAN_JOB_ID=$(oci resource-manager job create-plan-job \
+            --stack-id "$STACK_ID" \
+            --query 'data.id' \
+            --raw-output)
+          echo "PLAN_JOB_ID=$PLAN_JOB_ID" >> "$GITHUB_ENV"
+          echo "Plan job: $PLAN_JOB_ID"
+
+      - name: Wait for plan to complete
+        run: |
+          echo "Waiting for plan job $PLAN_JOB_ID..."
+          while true; do
+            STATUS=$(oci resource-manager job get \
+              --job-id "$PLAN_JOB_ID" \
+              --query 'data."lifecycle-state"' \
+              --raw-output)
+            echo "  Status: $STATUS"
+            case "$STATUS" in
+              SUCCEEDED) echo "Plan succeeded."; break ;;
+              FAILED|CANCELING|CANCELED)
+                oci resource-manager job get-job-logs \
+                  --job-id "$PLAN_JOB_ID" \
+                  --query 'data[*].message' --raw-output 2>/dev/null | tail -50 || true
+                echo "Plan job failed with status: $STATUS"
+                exit 1 ;;
+            esac
+            sleep 30
+          done
+
+      - name: Delete stack
+        if: always() && env.STACK_ID != ''
+        run: |
+          oci resource-manager stack delete \
+            --stack-id "$STACK_ID" \
+            --force
+          echo "Stack $STACK_ID deleted."
+
+  # ---------------------------------------------------------------------------
   # Summary: post a single comment to the PR with pass/fail for every job and
   # a direct link to the run log. Runs even if upstream jobs fail.
   # ---------------------------------------------------------------------------
   summarize:
     name: Post results
-    needs: [check-changes, validate, plan]
+    needs: [check-changes, validate, plan-terraform, plan-orm]
     if: always() && needs.check-changes.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -222,23 +427,26 @@ jobs:
         uses: actions/github-script@v7
         env:
           VALIDATE_RESULT: ${{ needs.validate.result }}
-          PLAN_RESULT: ${{ needs.plan.result }}
+          PLAN_TF_RESULT: ${{ needs.plan-terraform.result }}
+          PLAN_ORM_RESULT: ${{ needs.plan-orm.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           script: |
             const icon = (r) => r === 'success' ? '✅' : r === 'skipped' ? '⏭️' : '❌'
-            const validate = process.env.VALIDATE_RESULT
-            const plan     = process.env.PLAN_RESULT
-            const runUrl   = process.env.RUN_URL
-            const overall  = (validate === 'success' || validate === 'skipped') &&
-                             (plan     === 'success' || plan     === 'skipped')
+            const validate  = process.env.VALIDATE_RESULT
+            const planTf    = process.env.PLAN_TF_RESULT
+            const planOrm   = process.env.PLAN_ORM_RESULT
+            const runUrl    = process.env.RUN_URL
+            const ok = (r) => r === 'success' || r === 'skipped'
+            const overall = ok(validate) && ok(planTf) && ok(planOrm)
             const body = [
               `### ${overall ? '✅' : '❌'} CI - Plan results`,
               '',
               `| Job | Result |`,
               `|-----|--------|`,
-              `| Validation tests | ${icon(validate)} ${validate} |`,
-              `| TF plan tests    | ${icon(plan)} ${plan} |`,
+              `| Validation tests    | ${icon(validate)} ${validate} |`,
+              `| TF plan tests       | ${icon(planTf)} ${planTf} |`,
+              `| ORM plan tests      | ${icon(planOrm)} ${planOrm} |`,
               '',
               `[View full run log](${runUrl})`,
             ].join('\n')
