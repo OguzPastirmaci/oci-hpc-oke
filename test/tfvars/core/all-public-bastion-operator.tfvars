@@ -29,3 +29,5 @@ setup_alerting                                 = false
 worker_cpu_enabled  = false
 worker_gpu_enabled  = false
 worker_rdma_enabled = false
+
+create_policies = false

@@ -37,7 +37,12 @@ on:
 # provision duplicate clusters and leave orphaned resources if cancelled.
 # PR-triggered runs get their own concurrency group per PR number.
 concurrency:
-  group: ${{ github.event_name == 'issue_comment' && format('ci-apply-terraform-pr-{0}', github.event.issue.number) || 'ci-apply-terraform' }}
+  group: >-
+    ${{
+      github.event_name == 'issue_comment' && format('ci-apply-terraform-pr-{0}', github.event.issue.number) ||
+      github.event_name == 'workflow_call' && inputs.pr_number != 0 && format('ci-apply-terraform-pr-{0}', inputs.pr_number) ||
+      'ci-apply-terraform'
+    }}
   cancel-in-progress: false
 
 env:
@@ -59,6 +64,7 @@ jobs:
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '/ok-to-run-apply') &&
+      !contains(github.event.comment.body, '/ok-to-run-apply-') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     outputs:
@@ -81,7 +87,7 @@ jobs:
           COMMENT: ${{ github.event.comment.body }}
         run: |
           # Extract everything after /ok-to-run-apply, trim whitespace
-          tfvars=$(echo "$COMMENT" | grep -oP '(?<=/ok-to-run-apply\s)\S+.*' | xargs || true)
+          tfvars=$(echo "$COMMENT" | grep -oP '(?<=/ok-to-run-apply\s)\S+' | xargs || true)
           if [ -z "$tfvars" ]; then
             tfvars="tfvars/core/cluster-only.tfvars"
           fi

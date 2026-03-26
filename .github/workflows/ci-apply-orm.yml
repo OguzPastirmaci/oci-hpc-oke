@@ -28,7 +28,12 @@ on:
 # Never run two ORM apply jobs at the same time.
 # PR-triggered runs get their own concurrency group per PR number.
 concurrency:
-  group: ${{ github.event_name == 'issue_comment' && format('ci-apply-orm-pr-{0}', github.event.issue.number) || 'ci-apply-orm' }}
+  group: >-
+    ${{
+      github.event_name == 'issue_comment' && format('ci-apply-orm-pr-{0}', github.event.issue.number) ||
+      github.event_name == 'workflow_call' && inputs.pr_number != 0 && format('ci-apply-orm-pr-{0}', inputs.pr_number) ||
+      'ci-apply-orm'
+    }}
   cancel-in-progress: false
 
 env:
@@ -156,7 +161,7 @@ jobs:
             }' > secrets.json
 
           # Merge secrets with topology vars file
-          jq -s '.[0] * .[1]' secrets.json "$TFVARS_FILE" > variables.json
+          jq -s '.[0] * .[1]' "$TFVARS_FILE" secrets.json > variables.json
           echo "Variables for topology '$TOPOLOGY' (secrets redacted):"
           jq 'del(.ssh_public_key, .tenancy_ocid, .compartment_ocid, .current_user_ocid)' variables.json
 

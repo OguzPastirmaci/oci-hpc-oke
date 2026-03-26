@@ -288,7 +288,7 @@ jobs:
               ssh_public_key:             $ssh_public_key
             }' > secrets.json
 
-          jq -s '.[0] * .[1]' secrets.json "$TFVARS_FILE" > variables.json
+          jq -s '.[0] * .[1]' "$TFVARS_FILE" secrets.json > variables.json
 
       - name: Zip Terraform directory
         run: |
