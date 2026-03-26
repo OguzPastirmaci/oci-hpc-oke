@@ -71,29 +71,30 @@ func TestCoreProvisioning(t *testing.T) {
 	require.True(t, strings.HasPrefix(clusterPrivateEndpoint, "https://"), "cluster_private_endpoint should start with https://: %s", clusterPrivateEndpoint)
 
 	// Public endpoint only present when control plane is public
-	clusterPublicEndpoint, _ := terraform.OutputE(t, options, "cluster_public_endpoint")
+	clusterPublicEndpoint := optionalOutput(t, options, "cluster_public_endpoint")
 	if clusterPublicEndpoint != "" {
 		require.True(t, strings.HasPrefix(clusterPublicEndpoint, "https://"), "cluster_public_endpoint should start with https://: %s", clusterPublicEndpoint)
 	}
 
 	// Public LB subnet/NSG only present when public subnets are enabled
-	pubLbSubnetID, _ := terraform.OutputE(t, options, "pub_lb_subnet_id")
+	pubLbSubnetID := optionalOutput(t, options, "pub_lb_subnet_id")
 	if pubLbSubnetID != "" {
 		require.True(t, isValidOCID(pubLbSubnetID), "pub_lb_subnet_id should be a valid OCID: %s", pubLbSubnetID)
 
-		pubLbNsgID := terraform.Output(t, options, "pub_lb_nsg_id")
+		pubLbNsgID := optionalOutput(t, options, "pub_lb_nsg_id")
 		require.True(t, isValidOCID(pubLbNsgID), "pub_lb_nsg_id should be a valid OCID: %s", pubLbNsgID)
 	}
 
 	// Bastion only present when create_bastion = true
-	bastionID, _ := terraform.OutputE(t, options, "bastion_id")
+	bastionID := optionalOutput(t, options, "bastion_id")
 	if bastionID != "" {
 		require.True(t, isValidOCID(bastionID), "bastion_id should be a valid OCID: %s", bastionID)
-		require.NotEmpty(t, terraform.Output(t, options, "bastion_public_ip"), "bastion_public_ip should not be empty when bastion is created")
+		bastionIP := optionalOutput(t, options, "bastion_public_ip")
+		require.NotEmpty(t, bastionIP, "bastion_public_ip should not be empty when bastion is created")
 	}
 
 	// Operator only present when create_operator = true
-	operatorID, _ := terraform.OutputE(t, options, "operator_id")
+	operatorID := optionalOutput(t, options, "operator_id")
 	if operatorID != "" {
 		require.True(t, isValidOCID(operatorID), "operator_id should be a valid OCID: %s", operatorID)
 	}

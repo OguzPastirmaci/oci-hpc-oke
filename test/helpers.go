@@ -269,6 +269,17 @@ func setIfNotEmpty(vars map[string]interface{}, key, value string) {
 	}
 }
 
+// optionalOutput reads a terraform output that may be null or missing.
+// Terratest's OutputE renders null JSON values as the literal string "<nil>".
+func optionalOutput(t *testing.T, options *terraform.Options, key string) string {
+	t.Helper()
+	val, err := terraform.OutputE(t, options, key)
+	if err != nil || val == "<nil>" {
+		return ""
+	}
+	return val
+}
+
 // isValidOCID checks if a string matches the OCI OCID format.
 // Format: ocid1.<resource-type>.<realm>.[region][.future-use].<unique-id>
 func isValidOCID(s string) bool {
