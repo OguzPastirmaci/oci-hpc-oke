@@ -38,7 +38,7 @@ func TestCoreProvisioning(t *testing.T) {
 	controlPlaneNsgID := terraform.Output(t, options, "control_plane_nsg_id")
 	require.True(t, isValidOCID(controlPlaneNsgID), "control_plane_nsg_id should be a valid OCID: %s", controlPlaneNsgID)
 
-	// Pod subnet/NSG only exist for VCN-Native Pod Networking (not Flannel)
+	// Pod subnet/NSG — npn (default) and "VCN-Native Pod Networking" both create pod subnets
 	cniType := terraform.Output(t, options, "cni_type")
 	if cniType == "npn" || cniType == "VCN-Native Pod Networking" {
 		podSubnetID := terraform.Output(t, options, "pod_subnet_id")
