@@ -16,6 +16,15 @@ on:
   issue_comment:
     types: [created]
 
+  workflow_call:
+    inputs:
+      topology:
+        type: string
+        default: 'all-public-orm'
+      pr_number:
+        type: number
+        default: 0
+
 # Never run two ORM apply jobs at the same time.
 # PR-triggered runs get their own concurrency group per PR number.
 concurrency:
@@ -74,7 +83,7 @@ jobs:
   apply-orm:
     name: ORM provisioning / ${{ inputs.topology || needs.check-orm-trigger.outputs.topology || 'all-public-orm' }}
     needs: [check-orm-trigger]
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.check-orm-trigger.result == 'success')
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || needs.check-orm-trigger.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
@@ -84,7 +93,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
+          ref: >-
+            ${{
+              github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) ||
+              github.event_name == 'workflow_call' && inputs.pr_number != 0 && format('refs/pull/{0}/head', inputs.pr_number) ||
+              github.ref
+            }}
 
       - name: Install OCI CLI
         run: pip install oci-cli --quiet
@@ -366,11 +380,12 @@ jobs:
           echo "Stack $STACK_ID deleted."
 
       - name: Post result comment
-        if: always() && github.event_name == 'issue_comment'
+        if: always() && (github.event_name == 'issue_comment' || (github.event_name == 'workflow_call' && inputs.pr_number != 0))
         uses: actions/github-script@v7
         env:
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_call' && inputs.pr_number || github.event.issue.number }}
         with:
           script: |
             const status   = process.env.JOB_STATUS
@@ -390,6 +405,6 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: Number(process.env.PR_NUMBER),
               body,
             })

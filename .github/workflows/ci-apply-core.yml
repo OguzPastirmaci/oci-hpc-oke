@@ -21,6 +21,15 @@ on:
   issue_comment:
     types: [created]
 
+  workflow_call:
+    inputs:
+      tfvars:
+        type: string
+        default: 'tfvars/core/cluster-only.tfvars'
+      pr_number:
+        type: number
+        default: 0
+
   # schedule:
   #   - cron: '0 2 * * 1-5'  # Weeknights at 02:00 UTC
 
@@ -82,7 +91,7 @@ jobs:
     name: Terraform provisioning
     needs: [check-apply-trigger]
     # Run for workflow_dispatch (gate is skipped) or after a successful gate
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.check-apply-trigger.result == 'success')
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || needs.check-apply-trigger.result == 'success')
     runs-on: ubuntu-latest
     # Generous timeout: cluster create ~45 min + Helm deploys + destroy ~20 min
     timeout-minutes: 180
@@ -90,7 +99,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
+          ref: >-
+            ${{
+              github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) ||
+              github.event_name == 'workflow_call' && inputs.pr_number != 0 && format('refs/pull/{0}/head', inputs.pr_number) ||
+              github.ref
+            }}
 
       - uses: actions/setup-go@v5
         with:
