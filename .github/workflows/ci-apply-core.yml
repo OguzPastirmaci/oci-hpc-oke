@@ -129,6 +129,9 @@ jobs:
           key: terraform-${{ hashFiles('terraform/versions.tf', 'terraform/.terraform.lock.hcl') }}
           restore-keys: terraform-
 
+      - name: Install OCI CLI
+        run: pip install oci-cli --quiet
+
       - name: Set up OCI credentials
         env:
           OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}

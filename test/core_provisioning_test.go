@@ -1,6 +1,7 @@
 package test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -95,5 +96,14 @@ func TestCoreProvisioning(t *testing.T) {
 	operatorID := terraform.Output(t, options, "operator_id")
 	if operatorID != "" {
 		require.True(t, isValidOCID(operatorID), "operator_id should be a valid OCID: %s", operatorID)
+	}
+
+	// Tier 1 cluster health checks (only for public clusters reachable from CI)
+	if strings.HasPrefix(clusterPublicEndpoint, "https://") {
+		region := os.Getenv("OCI_REGION")
+		kubeconfigPath := generateKubeconfig(t, clusterID, region)
+		runClusterHealthChecks(t, kubeconfigPath)
+	} else {
+		t.Log("Skipping cluster health checks: no public endpoint")
 	}
 }
