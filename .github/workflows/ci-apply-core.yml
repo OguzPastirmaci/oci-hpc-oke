@@ -33,15 +33,16 @@ on:
   # schedule:
   #   - cron: '0 2 * * 1-5'  # Weeknights at 02:00 UTC
 
-# Never run two apply jobs at the same time — parallel apply jobs would
-# provision duplicate clusters and leave orphaned resources if cancelled.
-# PR-triggered runs get their own concurrency group per PR number.
+# Concurrency groups prevent duplicate applies for the same config/PR.
+# - PR comment runs: one group per PR (all configs on the same PR queue behind each other)
+# - workflow_dispatch: one group per tfvars value so each config can run in parallel
+# - workflow_call: one group per calling PR number
 concurrency:
   group: >-
     ${{
       github.event_name == 'issue_comment' && format('ci-apply-terraform-pr-{0}', github.event.issue.number) ||
       github.event_name == 'workflow_call' && inputs.pr_number != 0 && format('ci-apply-terraform-pr-{0}', inputs.pr_number) ||
-      'ci-apply-terraform'
+      format('ci-apply-terraform-{0}', inputs.tfvars)
     }}
   cancel-in-progress: false
 
