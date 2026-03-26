@@ -29,9 +29,6 @@ on:
       pr_number:
         type: number
         default: 0
-      bypass_gate:
-        type: boolean
-        default: false
 
   # schedule:
   #   - cron: '0 2 * * 1-5'  # Weeknights at 02:00 UTC
@@ -43,7 +40,7 @@ concurrency:
   group: >-
     ${{
       github.event_name == 'issue_comment' && format('ci-apply-terraform-pr-{0}', github.event.issue.number) ||
-      inputs.bypass_gate && inputs.pr_number != 0 && format('ci-apply-terraform-pr-{0}', inputs.pr_number) ||
+      github.event_name == 'workflow_call' && inputs.pr_number != 0 && format('ci-apply-terraform-pr-{0}', inputs.pr_number) ||
       'ci-apply-terraform'
     }}
   cancel-in-progress: false
@@ -67,7 +64,7 @@ jobs:
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '/ok-to-run-apply') &&
-      !contains(github.event.comment.body, '/ok-to-run-apply-') &&
+      !contains(github.event.comment.body, '/ok-to-run-apply-orm') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     outputs:
@@ -99,10 +96,8 @@ jobs:
   apply-terraform:
     name: Terraform provisioning
     needs: [check-apply-trigger]
-    # Run for workflow_dispatch, when called from ci-apply-both (bypass_gate), or after a successful gate.
-    # Note: reusable workflows inherit github.event_name from the caller, so we cannot use
-    # github.event_name == 'workflow_call' here — it will equal the parent's event name instead.
-    if: always() && (github.event_name == 'workflow_dispatch' || inputs.bypass_gate || needs.check-apply-trigger.result == 'success')
+    # Run for workflow_dispatch (gate is skipped) or after a successful gate
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || needs.check-apply-trigger.result == 'success')
     runs-on: ubuntu-latest
     # Generous timeout: cluster create ~45 min + Helm deploys + destroy ~20 min
     timeout-minutes: 180
@@ -113,7 +108,7 @@ jobs:
           ref: >-
             ${{
               github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) ||
-              inputs.bypass_gate && inputs.pr_number != 0 && format('refs/pull/{0}/head', inputs.pr_number) ||
+              github.event_name == 'workflow_call' && inputs.pr_number != 0 && format('refs/pull/{0}/head', inputs.pr_number) ||
               github.ref
             }}
 
