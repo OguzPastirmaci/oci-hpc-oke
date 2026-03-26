@@ -1,3 +1,7 @@
+create_public_subnets         = true
+control_plane_is_public       = true
+preferred_kubernetes_services = "public"
+
 create_bastion  = false
 create_operator = false
 
@@ -22,3 +26,5 @@ setup_alerting                                 = false
 worker_cpu_enabled  = false
 worker_gpu_enabled  = false
 worker_rdma_enabled = false
+
+create_policies = false

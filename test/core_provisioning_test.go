@@ -1,6 +1,7 @@
 package test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -37,9 +38,9 @@ func TestCoreProvisioning(t *testing.T) {
 	controlPlaneNsgID := terraform.Output(t, options, "control_plane_nsg_id")
 	require.True(t, isValidOCID(controlPlaneNsgID), "control_plane_nsg_id should be a valid OCID: %s", controlPlaneNsgID)
 
-	// Pod subnet/NSG only exist for VCN-Native Pod Networking (not Flannel)
+	// Pod subnet/NSG — npn (default) and "VCN-Native Pod Networking" both create pod subnets
 	cniType := terraform.Output(t, options, "cni_type")
-	if cniType == "VCN-Native Pod Networking" {
+	if cniType == "npn" || cniType == "VCN-Native Pod Networking" {
 		podSubnetID := terraform.Output(t, options, "pod_subnet_id")
 		require.True(t, isValidOCID(podSubnetID), "pod_subnet_id should be a valid OCID: %s", podSubnetID)
 
@@ -70,30 +71,40 @@ func TestCoreProvisioning(t *testing.T) {
 	require.True(t, strings.HasPrefix(clusterPrivateEndpoint, "https://"), "cluster_private_endpoint should start with https://: %s", clusterPrivateEndpoint)
 
 	// Public endpoint only present when control plane is public
-	clusterPublicEndpoint := terraform.Output(t, options, "cluster_public_endpoint")
+	clusterPublicEndpoint := optionalOutput(t, options, "cluster_public_endpoint")
 	if clusterPublicEndpoint != "" {
 		require.True(t, strings.HasPrefix(clusterPublicEndpoint, "https://"), "cluster_public_endpoint should start with https://: %s", clusterPublicEndpoint)
 	}
 
 	// Public LB subnet/NSG only present when public subnets are enabled
-	pubLbSubnetID := terraform.Output(t, options, "pub_lb_subnet_id")
+	pubLbSubnetID := optionalOutput(t, options, "pub_lb_subnet_id")
 	if pubLbSubnetID != "" {
 		require.True(t, isValidOCID(pubLbSubnetID), "pub_lb_subnet_id should be a valid OCID: %s", pubLbSubnetID)
 
-		pubLbNsgID := terraform.Output(t, options, "pub_lb_nsg_id")
+		pubLbNsgID := optionalOutput(t, options, "pub_lb_nsg_id")
 		require.True(t, isValidOCID(pubLbNsgID), "pub_lb_nsg_id should be a valid OCID: %s", pubLbNsgID)
 	}
 
 	// Bastion only present when create_bastion = true
-	bastionID := terraform.Output(t, options, "bastion_id")
+	bastionID := optionalOutput(t, options, "bastion_id")
 	if bastionID != "" {
 		require.True(t, isValidOCID(bastionID), "bastion_id should be a valid OCID: %s", bastionID)
-		require.NotEmpty(t, terraform.Output(t, options, "bastion_public_ip"), "bastion_public_ip should not be empty when bastion is created")
+		bastionIP := optionalOutput(t, options, "bastion_public_ip")
+		require.NotEmpty(t, bastionIP, "bastion_public_ip should not be empty when bastion is created")
 	}
 
 	// Operator only present when create_operator = true
-	operatorID := terraform.Output(t, options, "operator_id")
+	operatorID := optionalOutput(t, options, "operator_id")
 	if operatorID != "" {
 		require.True(t, isValidOCID(operatorID), "operator_id should be a valid OCID: %s", operatorID)
+	}
+
+	// Tier 1 cluster health checks (only for public clusters reachable from CI)
+	if strings.HasPrefix(clusterPublicEndpoint, "https://") {
+		region := os.Getenv("OCI_REGION")
+		kubeconfigPath := generateKubeconfig(t, clusterID, region)
+		runClusterHealthChecks(t, kubeconfigPath)
+	} else {
+		t.Log("Skipping cluster health checks: no public endpoint")
 	}
 }

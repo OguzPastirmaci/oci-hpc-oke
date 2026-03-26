@@ -1,4 +1,5 @@
 name: CI - Plan (Both)
+# Runs validation, Terraform plan, and ORM plan jobs on /ok-to-run-plan
 
 on:
   issue_comment:
@@ -27,6 +28,7 @@ jobs:
     if: >-
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '/ok-to-run-plan') &&
+      !contains(github.event.comment.body, '/ok-to-run-plan-') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     outputs:
@@ -129,7 +131,7 @@ jobs:
   # All matrix jobs run in parallel; a single failure does not stop the others.
   # ---------------------------------------------------------------------------
   plan-terraform:
-    name: TF Plan / ${{ matrix.name }}
+    name: Terraform Plan / ${{ matrix.name }}
     needs: check-changes
     if: needs.check-changes.outputs.run-tests == 'true'
     runs-on: ubuntu-latest
@@ -196,7 +198,7 @@ jobs:
           printf '%s' "$OCI_API_KEY_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem ~/.oci/config
 
-      - name: Run TF plan test
+      - name: Run Terraform plan test
         working-directory: test
         env:
           OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
@@ -287,7 +289,7 @@ jobs:
               ssh_public_key:             $ssh_public_key
             }' > secrets.json
 
-          jq -s '.[0] * .[1]' secrets.json "$TFVARS_FILE" > variables.json
+          jq -s '.[0] * .[1]' "$TFVARS_FILE" secrets.json > variables.json
 
       - name: Zip Terraform directory
         run: |
@@ -345,12 +347,19 @@ jobs:
       - name: Wait for plan to complete
         run: |
           echo "Waiting for plan job $PLAN_JOB_ID..."
+          MAX_POLLS=40  # 40 x 30s = 20 minutes
+          POLL=0
           while true; do
+            POLL=$((POLL + 1))
+            if [ "$POLL" -gt "$MAX_POLLS" ]; then
+              echo "Timed out waiting for plan job after $MAX_POLLS polls"
+              exit 1
+            fi
             STATUS=$(oci resource-manager job get \
               --job-id "$PLAN_JOB_ID" \
               --query 'data."lifecycle-state"' \
               --raw-output)
-            echo "  Status: $STATUS"
+            echo "  [$POLL/$MAX_POLLS] Status: $STATUS"
             case "$STATUS" in
               SUCCEEDED) echo "Plan succeeded."; break ;;
               FAILED|CANCELING|CANCELED)
@@ -403,7 +412,7 @@ jobs:
               `| Job | Result |`,
               `|-----|--------|`,
               `| Validation tests    | ${icon(validate)} ${validate} |`,
-              `| TF plan tests       | ${icon(planTf)} ${planTf} |`,
+              `| Terraform plan tests       | ${icon(planTf)} ${planTf} |`,
               `| ORM plan tests      | ${icon(planOrm)} ${planOrm} |`,
               '',
               `[View full run log](${runUrl})`,
