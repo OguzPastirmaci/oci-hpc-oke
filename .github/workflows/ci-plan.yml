@@ -1,4 +1,5 @@
 name: CI - Plan (Both)
+# Runs validation, Terraform plan, and ORM plan jobs on /ok-to-run-plan
 
 on:
   issue_comment:
