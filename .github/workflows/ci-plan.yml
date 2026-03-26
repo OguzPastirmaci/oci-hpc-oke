@@ -1,4 +1,4 @@
-name: CI - Plan
+name: CI - Plan (Both)
 
 on:
   issue_comment:
@@ -440,7 +440,7 @@ jobs:
             const ok = (r) => r === 'success' || r === 'skipped'
             const overall = ok(validate) && ok(planTf) && ok(planOrm)
             const body = [
-              `### ${overall ? '✅' : '❌'} CI - Plan results`,
+              `### ${overall ? '✅' : '❌'} CI - Plan (Both) results`,
               '',
               `| Job | Result |`,
               `|-----|--------|`,
