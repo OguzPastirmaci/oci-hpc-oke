@@ -130,7 +130,7 @@ jobs:
   # All matrix jobs run in parallel; a single failure does not stop the others.
   # ---------------------------------------------------------------------------
   plan-terraform:
-    name: TF Plan / ${{ matrix.name }}
+    name: Terraform Plan / ${{ matrix.name }}
     needs: check-changes
     if: needs.check-changes.outputs.run-tests == 'true'
     runs-on: ubuntu-latest
@@ -197,7 +197,7 @@ jobs:
           printf '%s' "$OCI_API_KEY_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem ~/.oci/config
 
-      - name: Run TF plan test
+      - name: Run Terraform plan test
         working-directory: test
         env:
           OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
@@ -404,7 +404,7 @@ jobs:
               `| Job | Result |`,
               `|-----|--------|`,
               `| Validation tests    | ${icon(validate)} ${validate} |`,
-              `| TF plan tests       | ${icon(planTf)} ${planTf} |`,
+              `| Terraform plan tests       | ${icon(planTf)} ${planTf} |`,
               `| ORM plan tests      | ${icon(planOrm)} ${planOrm} |`,
               '',
               `[View full run log](${runUrl})`,
