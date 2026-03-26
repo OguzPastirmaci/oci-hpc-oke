@@ -5,9 +5,19 @@ on:
   issue_comment:
     types: [created]
 
-# Cancel in-flight runs for the same PR when a new /ok-to-run-plan is triggered
+# Cancel in-flight plan runs for the same PR when a new /ok-to-run-plan is triggered.
+# Non-plan comments (e.g. /ok-to-run-apply-both) also fire this workflow; give them
+# a unique group so they don't cancel a real plan run.
 concurrency:
-  group: ci-plan-${{ github.event.issue.number }}
+  group: >-
+    ${{
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/ok-to-run-plan') &&
+      !contains(github.event.comment.body, '/ok-to-run-plan-') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      format('ci-plan-{0}', github.event.issue.number) ||
+      github.run_id
+    }}
   cancel-in-progress: true
 
 env:

@@ -51,6 +51,7 @@ jobs:
     with:
       tfvars: tfvars/core/cluster-only.tfvars
       pr_number: ${{ github.event.issue.number }}
+      bypass_gate: true
     secrets: inherit
 
   apply-orm:
@@ -61,4 +62,5 @@ jobs:
     with:
       topology: all-public-orm
       pr_number: ${{ github.event.issue.number }}
+      bypass_gate: true
     secrets: inherit
