@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Gate: verify /ok-to-apply-orm comment is authorized. Skipped for
+  # Gate: verify /ok-to-run-apply-orm comment is authorized. Skipped for
   # workflow_dispatch so the apply job runs unconditionally in that case.
   # ---------------------------------------------------------------------------
   check-orm-trigger:
@@ -40,7 +40,7 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/ok-to-apply-orm') &&
+      contains(github.event.comment.body, '/ok-to-run-apply-orm') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     outputs:
@@ -62,7 +62,7 @@ jobs:
         env:
           COMMENT: ${{ github.event.comment.body }}
         run: |
-          topology=$(echo "$COMMENT" | grep -oP '(?<=/ok-to-apply-orm\s)\S+' | xargs || true)
+          topology=$(echo "$COMMENT" | grep -oP '(?<=/ok-to-run-apply-orm\s)\S+' | xargs || true)
           if [ -z "$topology" ]; then
             topology="all-public-orm"
           fi

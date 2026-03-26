@@ -41,7 +41,7 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Gate: verify the /ok-to-apply comment is authorized. Skipped entirely for
+  # Gate: verify the /ok-to-run-apply comment is authorized. Skipped entirely for
   # workflow_dispatch so the apply job runs unconditionally in that case.
   # ---------------------------------------------------------------------------
   check-apply-trigger:
@@ -49,7 +49,7 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/ok-to-apply') &&
+      contains(github.event.comment.body, '/ok-to-run-apply') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     outputs:
@@ -71,8 +71,8 @@ jobs:
         env:
           COMMENT: ${{ github.event.comment.body }}
         run: |
-          # Extract everything after /ok-to-apply, trim whitespace
-          tfvars=$(echo "$COMMENT" | grep -oP '(?<=/ok-to-apply\s)\S+.*' | xargs || true)
+          # Extract everything after /ok-to-run-apply, trim whitespace
+          tfvars=$(echo "$COMMENT" | grep -oP '(?<=/ok-to-run-apply\s)\S+.*' | xargs || true)
           if [ -z "$tfvars" ]; then
             tfvars="tfvars/core/cluster-only.tfvars"
           fi
