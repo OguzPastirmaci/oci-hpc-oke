@@ -332,7 +332,7 @@ jobs:
             volumeName: fss-pv
           EOF
 
-          kubectl wait --for=jsonpath={.status.phase}=Bound pvc/fss-test-pvc --timeout=120s
+          kubectl wait --for='jsonpath={.status.phase}=Bound' pvc/fss-test-pvc --timeout=120s
           echo "OK:   FSS PVC bound"
 
           echo "Health check: FSS write"
@@ -356,7 +356,7 @@ jobs:
                 claimName: fss-test-pvc
           EOF
 
-          kubectl wait --for=jsonpath={.status.phase}=Succeeded pod/fss-writer --timeout=120s
+          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/fss-writer --timeout=120s
           echo "OK:   FSS writer pod completed"
 
           echo "Health check: FSS read"
@@ -380,7 +380,7 @@ jobs:
                 claimName: fss-test-pvc
           EOF
 
-          kubectl wait --for=jsonpath={.status.phase}=Succeeded pod/fss-reader --timeout=120s
+          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/fss-reader --timeout=120s
           CONTENT=$(kubectl logs fss-reader)
           if [[ "$CONTENT" != *"fss-test-content"* ]]; then
             echo "FAIL: reader pod output does not contain expected content: $CONTENT"
