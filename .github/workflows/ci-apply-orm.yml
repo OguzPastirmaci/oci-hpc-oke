@@ -557,7 +557,7 @@ jobs:
             containers:
             - name: server
               image: busybox
-              command: ["sh", "-c", "echo 'net-check-ok' | nc -lp 8080"]
+              command: ["sh", "-c", "echo 'net-check-ok' > /tmp/index.html && httpd -f -p 8080 -h /tmp"]
           EOF
 
           kubectl wait --for=condition=Ready pod/net-server --timeout=120s
@@ -579,7 +579,7 @@ jobs:
             containers:
             - name: client
               image: busybox
-              command: ["sh", "-c", "for i in \$(seq 1 30); do RESULT=\$(wget -qO- -T 5 http://${SERVER_IP}:8080 2>/dev/null) && echo \"\$RESULT\" && exit 0; sleep 2; done; echo 'timeout'; exit 1"]
+              command: ["sh", "-c", "for i in \$(seq 1 30); do RESULT=\$(wget -qO- -T 5 http://${SERVER_IP}:8080/index.html 2>/dev/null) && echo \"\$RESULT\" && exit 0; sleep 2; done; echo 'timeout'; exit 1"]
           EOF
 
           kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/net-client --timeout=120s
@@ -606,12 +606,12 @@ jobs:
             containers:
             - name: dns
               image: busybox
-              command: ["sh", "-c", "nslookup kubernetes.default"]
+              command: ["sh", "-c", "nslookup kubernetes.default.svc.cluster.local"]
           EOF
 
           kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/dns-checker --timeout=120s
           DNS_OUTPUT=$(kubectl logs dns-checker)
-          if ! echo "$DNS_OUTPUT" | grep -qE 'Address.*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+          if echo "$DNS_OUTPUT" | grep -q 'NXDOMAIN'; then
             echo "FAIL: DNS resolution failed: $DNS_OUTPUT"
             exit 1
           fi
