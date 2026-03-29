@@ -85,6 +85,8 @@ output "fss_mount_target_ip" { value = one(data.oci_core_private_ip.fss_mt_ip[*]
 output "fss_export_path" { value = one(oci_file_storage_export.FSSExport[*].path) }
 output "fss_nsg_id" { value = module.oke.fss_nsg_id }
 output "fss_subnet_id" { value = module.oke.fss_subnet_id }
+output "fss_mount_path"    { value = var.fss_mount_path }
+output "lustre_mount_path" { value = var.lustre_mount_path }
 
 # Workers
 output "worker_subnet_id" { value = module.oke.worker_subnet_id }

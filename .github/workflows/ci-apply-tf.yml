@@ -486,6 +486,40 @@ jobs:
             exit 1
           fi
           echo "OK:   FSS reader output: $CONTENT"
+
+          echo "Health check: FSS OS-level mount (hostPath)"
+          FSS_MOUNT_PATH=$(jq -r '.fss_mount_path.value // "/mnt/oci-fss"' state.json)
+          FSS_WRITER_NODE=$(kubectl get pod fss-writer -o jsonpath='{.spec.nodeName}')
+          echo "  writer ran on node: $FSS_WRITER_NODE"
+          echo "  host mount path: $FSS_MOUNT_PATH"
+          kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: fss-hostpath-reader
+          spec:
+            restartPolicy: Never
+            nodeName: ${FSS_WRITER_NODE}
+            containers:
+            - name: reader
+              image: busybox
+              command: ["sh", "-c", "cat /mnt/fss-host/testfile.txt"]
+              volumeMounts:
+              - name: fss-host
+                mountPath: /mnt/fss-host
+            volumes:
+            - name: fss-host
+              hostPath:
+                path: ${FSS_MOUNT_PATH}
+                type: Directory
+          EOF
+          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/fss-hostpath-reader --timeout=120s
+          HOST_CONTENT=$(kubectl logs fss-hostpath-reader)
+          if [[ "$HOST_CONTENT" != *"fss-test-content"* ]]; then
+            echo "FAIL: FSS hostPath reader output does not contain expected content: $HOST_CONTENT"
+            exit 1
+          fi
+          echo "OK:   FSS hostPath reader output: $HOST_CONTENT"
           echo "Health check: all FSS health checks passed"
 
       - name: Lustre health checks
@@ -562,6 +596,40 @@ jobs:
             exit 1
           fi
           echo "OK:   Lustre reader output: $CONTENT"
+
+          echo "Health check: Lustre OS-level mount (hostPath)"
+          LUSTRE_MOUNT_PATH=$(jq -r '.lustre_mount_path.value // "/mnt/oci-lustre"' state.json)
+          LUSTRE_WRITER_NODE=$(kubectl get pod lustre-writer -o jsonpath='{.spec.nodeName}')
+          echo "  writer ran on node: $LUSTRE_WRITER_NODE"
+          echo "  host mount path: $LUSTRE_MOUNT_PATH"
+          kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: lustre-hostpath-reader
+          spec:
+            restartPolicy: Never
+            nodeName: ${LUSTRE_WRITER_NODE}
+            containers:
+            - name: reader
+              image: busybox
+              command: ["sh", "-c", "cat /mnt/lustre-host/testfile.txt"]
+              volumeMounts:
+              - name: lustre-host
+                mountPath: /mnt/lustre-host
+            volumes:
+            - name: lustre-host
+              hostPath:
+                path: ${LUSTRE_MOUNT_PATH}
+                type: Directory
+          EOF
+          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/lustre-hostpath-reader --timeout=120s
+          HOST_CONTENT=$(kubectl logs lustre-hostpath-reader)
+          if [[ "$HOST_CONTENT" != *"lustre-test-content"* ]]; then
+            echo "FAIL: Lustre hostPath reader output does not contain expected content: $HOST_CONTENT"
+            exit 1
+          fi
+          echo "OK:   Lustre hostPath reader output: $HOST_CONTENT"
           echo "Health check: all Lustre health checks passed"
 
       - name: Monitoring health checks
@@ -585,7 +653,7 @@ jobs:
         if: always() && startsWith(env.TOPOLOGY, 'public') && contains(env.TOPOLOGY, 'fss')
         run: |
           if [ -f "$HOME/.kube/config" ]; then
-            kubectl delete pod fss-writer fss-reader --ignore-not-found --wait=true --timeout=60s || true
+            kubectl delete pod fss-writer fss-reader fss-hostpath-reader --ignore-not-found --wait=true --timeout=60s || true
             kubectl delete pvc fss-test-pvc --ignore-not-found --wait=true --timeout=120s || true
           fi
 
@@ -593,7 +661,7 @@ jobs:
         if: always() && startsWith(env.TOPOLOGY, 'public') && contains(env.TOPOLOGY, 'lustre')
         run: |
           if [ -f "$HOME/.kube/config" ]; then
-            kubectl delete pod lustre-writer lustre-reader --ignore-not-found --wait=true --timeout=60s || true
+            kubectl delete pod lustre-writer lustre-reader lustre-hostpath-reader --ignore-not-found --wait=true --timeout=60s || true
             kubectl delete pvc lustre-test-pvc --ignore-not-found --wait=true --timeout=120s || true
           fi
 
