@@ -529,6 +529,11 @@ jobs:
             name: fss-writer
           spec:
             restartPolicy: Never
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
             containers:
             - name: writer
               image: busybox
@@ -555,6 +560,11 @@ jobs:
           spec:
             restartPolicy: Never
             nodeName: ${FSS_WRITER_NODE}
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
             containers:
             - name: reader
               image: busybox
@@ -587,6 +597,11 @@ jobs:
           spec:
             restartPolicy: Never
             nodeName: ${FSS_WRITER_NODE}
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
             containers:
             - name: reader
               image: busybox
@@ -639,6 +654,11 @@ jobs:
             name: lustre-writer
           spec:
             restartPolicy: Never
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
             containers:
             - name: writer
               image: busybox
@@ -665,6 +685,11 @@ jobs:
           spec:
             restartPolicy: Never
             nodeName: ${LUSTRE_WRITER_NODE}
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
             containers:
             - name: reader
               image: busybox
@@ -697,6 +722,11 @@ jobs:
           spec:
             restartPolicy: Never
             nodeName: ${LUSTRE_WRITER_NODE}
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
             containers:
             - name: reader
               image: busybox

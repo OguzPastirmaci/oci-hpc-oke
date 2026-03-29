@@ -105,6 +105,11 @@ metadata:
   name: fss-writer
 spec:
   restartPolicy: Never
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+  - key: amd.com/gpu
+    operator: Exists
   containers:
   - name: writer
     image: busybox
@@ -144,6 +149,11 @@ metadata:
 spec:
   restartPolicy: Never
   nodeName: %s
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+  - key: amd.com/gpu
+    operator: Exists
   containers:
   - name: reader
     image: busybox
@@ -184,6 +194,11 @@ metadata:
 spec:
   restartPolicy: Never
   nodeName: %s
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+  - key: amd.com/gpu
+    operator: Exists
   containers:
   - name: reader
     image: busybox
