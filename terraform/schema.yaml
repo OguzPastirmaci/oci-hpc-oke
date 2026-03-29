@@ -950,8 +950,8 @@ variables:
  
   # Storage
   create_fss:
-    title: Create a Storage Class backed by File Storage Service (FSS) file system
-    description: Provision a shared File Storage Service (FSS) file system and create a Storage Class.
+    title: Create a File Storage Service (FSS) file system
+    description: Provision a shared File Storage Service (FSS) file system, mount target, and a Persistent Volume.
     type: boolean
     default: false
     required: true
