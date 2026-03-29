@@ -782,7 +782,7 @@ jobs:
               --raw-output)
             echo "  [$POLL/$MAX_POLLS] Status: $STATUS"
             case "$STATUS" in
-              SUCCEEDED) echo "Destroy succeeded."; break ;;
+              SUCCEEDED) echo "Destroy succeeded."; echo "DESTROY_SUCCEEDED=true" >> "$GITHUB_ENV"; break ;;
               FAILED|CANCELING|CANCELED)
                 echo "Destroy job failed with status: $STATUS"
                 exit 1 ;;
@@ -800,7 +800,7 @@ jobs:
             --raw-output 2>&1 | tail -100 || echo "Could not fetch destroy job logs."
 
       - name: Delete stack
-        if: env.STACK_ID != '' && !failure()
+        if: always() && env.STACK_ID != '' && env.DESTROY_SUCCEEDED == 'true'
         run: |
           oci resource-manager stack delete \
             --stack-id "$STACK_ID" \
