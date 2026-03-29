@@ -99,6 +99,37 @@ Monitoring:
 RUN_MONITORING_TESTS=1 go test -count=1 ./... -run TestMonitoring -timeout 3h
 ```
 
+## CI health checks and assertions
+
+The CI apply workflows (`ci-apply-tf.yml`, `ci-apply-orm.yml`) run the following checks after a successful apply. All checks run for public topologies only (kubectl must be reachable).
+
+**Cluster**
+- API server connectivity
+- All nodes Ready, count matches expected pool sizes (30 min timeout)
+- CoreDNS and kube-proxy pods Ready
+- All kube-system pods Running or Completed
+
+**Network**
+- Pod-to-pod connectivity (httpd server + wget client)
+- DNS resolution (`nslookup kubernetes.default.svc.cluster.local`)
+
+**GPU** (skipped if no GPU/RDMA pools)
+- `nvidia.com/gpu` or `amd.com/gpu` resources advertised on GPU nodes
+
+**Storage** (FSS/Lustre topologies only)
+- Output assertions: file system OCID, mount target IP / MGS address, NSG, subnet
+- CSI write/read: writer pod writes via PVC, reader pod reads back (pinned to same node)
+- OS-level mount: hostPath reader verifies cloud-init mount serves the same data (Lustre uses 60s retry for cache coherency)
+- ORM: Lustre PV state check (`kubectl_manifest.lustre_pv` in Terraform state)
+
+**Monitoring** (monitoring topologies only)
+- Grafana API responds 200
+- Dashboards exist (count > 0)
+- Prometheus queryable via Grafana (`up` query returns success)
+- Node-exporter DaemonSet desired == ready
+
+All test pods include `nvidia.com/gpu` and `amd.com/gpu` tolerations.
+
 ## Notes
 - The default suite (no `TFVARS_FILE`) sets `create_policies=false` to avoid tenancy-level policy creation. When using a var file, set this explicitly if needed.
 - For instance principal runs, set `OCI_CLI_AUTH=instance_principal` when using monitoring tests so the `oci` CLI can authenticate.
