@@ -120,13 +120,23 @@ spec:
 		"--timeout=120s",
 	)
 
-	readerYAML := `
+	writerNodeRaw, err := k8s.RunKubectlAndGetOutputE(t, opts,
+		"get", "pod", "lustre-writer",
+		"-o", "jsonpath={.spec.nodeName}",
+	)
+	require.NoError(t, err)
+	writerNode := strings.TrimSpace(writerNodeRaw)
+	require.NotEmpty(t, writerNode, "lustre-writer pod should have a nodeName")
+	t.Logf("Lustre writer ran on node: %s", writerNode)
+
+	readerYAML := fmt.Sprintf(`
 apiVersion: v1
 kind: Pod
 metadata:
   name: lustre-reader
 spec:
   restartPolicy: Never
+  nodeName: %s
   containers:
   - name: reader
     image: busybox
@@ -138,7 +148,7 @@ spec:
   - name: lustre
     persistentVolumeClaim:
       claimName: lustre-test-pvc
-`
+`, writerNode)
 	k8s.KubectlApplyFromString(t, opts, readerYAML)
 	defer k8s.RunKubectl(t, opts, "delete", "pod", "lustre-reader", "--ignore-not-found=true")
 
@@ -156,15 +166,6 @@ spec:
 	t.Log("Lustre write/read test passed")
 
 	// OS-level mount check: read the file written via CSI using a hostPath pod on the same node
-	t.Log("Fetching Lustre writer pod node name for hostPath pinning")
-	writerNodeRaw, err := k8s.RunKubectlAndGetOutputE(t, opts,
-		"get", "pod", "lustre-writer",
-		"-o", "jsonpath={.spec.nodeName}",
-	)
-	require.NoError(t, err)
-	writerNode := strings.TrimSpace(writerNodeRaw)
-	require.NotEmpty(t, writerNode, "lustre-writer pod should have a nodeName")
-
 	lustreMountPath := terraform.Output(t, options, "lustre_mount_path")
 	require.NotEmpty(t, lustreMountPath)
 

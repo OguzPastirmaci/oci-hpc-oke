@@ -127,13 +127,23 @@ spec:
 		"--timeout=120s",
 	)
 
-	readerYAML := `
+	writerNodeRaw, err := k8s.RunKubectlAndGetOutputE(t, opts,
+		"get", "pod", "fss-writer",
+		"-o", "jsonpath={.spec.nodeName}",
+	)
+	require.NoError(t, err)
+	writerNode := strings.TrimSpace(writerNodeRaw)
+	require.NotEmpty(t, writerNode, "fss-writer pod should have a nodeName")
+	t.Logf("FSS writer ran on node: %s", writerNode)
+
+	readerYAML := fmt.Sprintf(`
 apiVersion: v1
 kind: Pod
 metadata:
   name: fss-reader
 spec:
   restartPolicy: Never
+  nodeName: %s
   containers:
   - name: reader
     image: busybox
@@ -145,7 +155,7 @@ spec:
   - name: fss
     persistentVolumeClaim:
       claimName: fss-test-pvc
-`
+`, writerNode)
 	k8s.KubectlApplyFromString(t, opts, readerYAML)
 	defer k8s.RunKubectl(t, opts, "delete", "pod", "fss-reader", "--ignore-not-found=true")
 
@@ -163,15 +173,6 @@ spec:
 	t.Log("FSS write/read test passed")
 
 	// OS-level mount check: read the file written via CSI using a hostPath pod on the same node
-	t.Log("Fetching FSS writer pod node name for hostPath pinning")
-	writerNodeRaw, err := k8s.RunKubectlAndGetOutputE(t, opts,
-		"get", "pod", "fss-writer",
-		"-o", "jsonpath={.spec.nodeName}",
-	)
-	require.NoError(t, err)
-	writerNode := strings.TrimSpace(writerNodeRaw)
-	require.NotEmpty(t, writerNode, "fss-writer pod should have a nodeName")
-
 	fssMountPath := terraform.Output(t, options, "fss_mount_path")
 	require.NotEmpty(t, fssMountPath)
 

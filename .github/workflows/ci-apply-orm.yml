@@ -543,16 +543,18 @@ jobs:
           EOF
 
           kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/fss-writer --timeout=120s
-          echo "OK:   FSS writer pod completed"
+          FSS_WRITER_NODE=$(kubectl get pod fss-writer -o jsonpath='{.spec.nodeName}')
+          echo "OK:   FSS writer pod completed (node: $FSS_WRITER_NODE)"
 
           echo "Health check: FSS read"
-          kubectl apply -f - <<'EOF'
+          kubectl apply -f - <<EOF
           apiVersion: v1
           kind: Pod
           metadata:
             name: fss-reader
           spec:
             restartPolicy: Never
+            nodeName: ${FSS_WRITER_NODE}
             containers:
             - name: reader
               image: busybox
@@ -576,8 +578,6 @@ jobs:
 
           echo "Health check: FSS OS-level mount (hostPath)"
           FSS_MOUNT_PATH=$(jq -r '.outputs.fss_mount_path.value // "/mnt/oci-fss"' state.json)
-          FSS_WRITER_NODE=$(kubectl get pod fss-writer -o jsonpath='{.spec.nodeName}')
-          echo "  writer ran on node: $FSS_WRITER_NODE"
           echo "  host mount path: $FSS_MOUNT_PATH"
           kubectl apply -f - <<EOF
           apiVersion: v1
@@ -653,16 +653,18 @@ jobs:
           EOF
 
           kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/lustre-writer --timeout=120s
-          echo "OK:   Lustre writer pod completed"
+          LUSTRE_WRITER_NODE=$(kubectl get pod lustre-writer -o jsonpath='{.spec.nodeName}')
+          echo "OK:   Lustre writer pod completed (node: $LUSTRE_WRITER_NODE)"
 
           echo "Health check: Lustre read"
-          kubectl apply -f - <<'EOF'
+          kubectl apply -f - <<EOF
           apiVersion: v1
           kind: Pod
           metadata:
             name: lustre-reader
           spec:
             restartPolicy: Never
+            nodeName: ${LUSTRE_WRITER_NODE}
             containers:
             - name: reader
               image: busybox
@@ -686,8 +688,6 @@ jobs:
 
           echo "Health check: Lustre OS-level mount (hostPath)"
           LUSTRE_MOUNT_PATH=$(jq -r '.outputs.lustre_mount_path.value // "/mnt/oci-lustre"' state.json)
-          LUSTRE_WRITER_NODE=$(kubectl get pod lustre-writer -o jsonpath='{.spec.nodeName}')
-          echo "  writer ran on node: $LUSTRE_WRITER_NODE"
           echo "  host mount path: $LUSTRE_MOUNT_PATH"
           kubectl apply -f - <<EOF
           apiVersion: v1
