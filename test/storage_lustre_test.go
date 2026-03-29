@@ -1,8 +1,10 @@
 package test
 
 import (
+	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/gruntwork-io/terratest/modules/k8s"
@@ -55,13 +57,13 @@ func TestStorageLustre(t *testing.T) {
 	clusterID := terraform.Output(t, options, "cluster_id")
 	region := os.Getenv("OCI_REGION")
 	kubeconfigPath := generateKubeconfig(t, clusterID, region)
-	testLustreKubernetes(t, kubeconfigPath)
+	testLustreKubernetes(t, kubeconfigPath, options)
 }
 
 // testLustreKubernetes verifies PVC binding and shared filesystem write/read.
 // Both tests share one PVC because lustre-pv uses the Retain reclaim policy —
 // after a PVC is deleted the PV enters Released state and cannot be rebound.
-func testLustreKubernetes(t *testing.T, kubeconfigPath string) {
+func testLustreKubernetes(t *testing.T, kubeconfigPath string, options *terraform.Options) {
 	t.Helper()
 	opts := k8s.NewKubectlOptions("", kubeconfigPath, "default")
 
@@ -96,6 +98,11 @@ metadata:
   name: lustre-writer
 spec:
   restartPolicy: Never
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+  - key: amd.com/gpu
+    operator: Exists
   containers:
   - name: writer
     image: busybox
@@ -118,13 +125,28 @@ spec:
 		"--timeout=120s",
 	)
 
-	readerYAML := `
+	writerNodeRaw, err := k8s.RunKubectlAndGetOutputE(t, opts,
+		"get", "pod", "lustre-writer",
+		"-o", "jsonpath={.spec.nodeName}",
+	)
+	require.NoError(t, err)
+	writerNode := strings.TrimSpace(writerNodeRaw)
+	require.NotEmpty(t, writerNode, "lustre-writer pod should have a nodeName")
+	t.Logf("Lustre writer ran on node: %s", writerNode)
+
+	readerYAML := fmt.Sprintf(`
 apiVersion: v1
 kind: Pod
 metadata:
   name: lustre-reader
 spec:
   restartPolicy: Never
+  nodeName: %s
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+  - key: amd.com/gpu
+    operator: Exists
   containers:
   - name: reader
     image: busybox
@@ -136,7 +158,7 @@ spec:
   - name: lustre
     persistentVolumeClaim:
       claimName: lustre-test-pvc
-`
+`, writerNode)
 	k8s.KubectlApplyFromString(t, opts, readerYAML)
 	defer k8s.RunKubectl(t, opts, "delete", "pod", "lustre-reader", "--ignore-not-found=true")
 
@@ -152,4 +174,51 @@ spec:
 	require.Contains(t, output, "lustre-test-content",
 		"reader pod output should contain written content")
 	t.Log("Lustre write/read test passed")
+
+	// OS-level mount check: read the file written via CSI using a hostPath pod on the same node
+	lustreMountPath := terraform.Output(t, options, "lustre_mount_path")
+	require.NotEmpty(t, lustreMountPath)
+
+	hostpathReaderYAML := fmt.Sprintf(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lustre-hostpath-reader
+spec:
+  restartPolicy: Never
+  nodeName: %s
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+  - key: amd.com/gpu
+    operator: Exists
+  containers:
+  - name: reader
+    image: busybox
+    command: ["sh", "-c", "for i in $(seq 1 20); do content=$(cat /mnt/lustre-host/testfile.txt 2>/dev/null); if [ -n \"$content\" ]; then echo \"$content\"; exit 0; fi; sleep 3; done; echo 'file not found after 60s'; exit 1"]
+    volumeMounts:
+    - name: lustre-host
+      mountPath: /mnt/lustre-host
+  volumes:
+  - name: lustre-host
+    hostPath:
+      path: %s
+      type: Directory
+`, writerNode, lustreMountPath)
+
+	k8s.KubectlApplyFromString(t, opts, hostpathReaderYAML)
+	defer k8s.RunKubectl(t, opts, "delete", "pod", "lustre-hostpath-reader", "--ignore-not-found=true")
+
+	t.Log("Waiting for Lustre hostPath reader pod to complete")
+	k8s.RunKubectl(t, opts, "wait",
+		"--for=jsonpath={.status.phase}=Succeeded",
+		"pod/lustre-hostpath-reader",
+		"--timeout=120s",
+	)
+
+	hostOutput, err := k8s.RunKubectlAndGetOutputE(t, opts, "logs", "lustre-hostpath-reader")
+	require.NoError(t, err)
+	require.Contains(t, hostOutput, "lustre-test-content",
+		"Lustre hostPath reader should see the file written via CSI path")
+	t.Log("Lustre OS-level mount (hostPath) test passed")
 }
