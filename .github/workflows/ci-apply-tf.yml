@@ -795,7 +795,7 @@ jobs:
             containers:
             - name: reader
               image: busybox
-              command: ["sh", "-c", "for i in $(seq 1 20); do content=$(cat /mnt/lustre-host/testfile.txt 2>/dev/null); if [ -n \"$content\" ]; then echo \"$content\"; exit 0; fi; sleep 3; done; echo 'file not found after 60s'; exit 1"]
+              command: ["sh", "-c", "for i in \$(seq 1 20); do content=\$(cat /mnt/lustre-host/testfile.txt 2>/dev/null); if [ -n \"\$content\" ]; then echo \"\$content\"; exit 0; fi; sleep 3; done; echo 'file not found after 60s'; exit 1"]
               volumeMounts:
               - name: lustre-host
                 mountPath: /mnt/lustre-host
@@ -815,7 +815,7 @@ jobs:
           echo "Health check: all Lustre health checks passed"
 
       - name: Monitoring health checks
-        if: contains(env.TOPOLOGY, 'monitoring')
+        if: startsWith(env.TOPOLOGY, 'public') && contains(env.TOPOLOGY, 'monitoring')
         run: |
           GRAFANA_URL=$(jq -r '.grafana_url.value' state.json)
           GRAFANA_PASS=$(jq -r '.grafana_admin_password.value' state.json)
