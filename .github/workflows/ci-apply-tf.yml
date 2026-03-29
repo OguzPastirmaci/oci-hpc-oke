@@ -678,6 +678,25 @@ jobs:
             sleep 10
           done
           [ "$STATUS" = "200" ] || { echo "FAIL: Grafana API did not respond 200 after 60 attempts"; exit 1; }
+
+          echo "Health check: Grafana dashboards"
+          DASH_COUNT=$(curl -s --insecure -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/search?type=dash-db" | jq 'length')
+          if [ "$DASH_COUNT" -gt 0 ] 2>/dev/null; then
+            echo "OK:   $DASH_COUNT dashboard(s) found"
+          else
+            echo "FAIL: no dashboards found"
+            exit 1
+          fi
+
+          echo "Health check: Grafana → Prometheus query"
+          QUERY_STATUS=$(curl -s --insecure -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/datasources/proxy/uid/prometheus/api/v1/query?query=up" | jq -r '.status // empty')
+          if [ "$QUERY_STATUS" = "success" ]; then
+            echo "OK:   Prometheus query via Grafana returned success"
+          else
+            echo "FAIL: Prometheus query via Grafana returned: $QUERY_STATUS"
+            exit 1
+          fi
+
           echo "Health check: all monitoring health checks passed"
 
       - name: Clean up FSS test resources
