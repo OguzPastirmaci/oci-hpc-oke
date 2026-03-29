@@ -195,7 +195,7 @@ spec:
   containers:
   - name: reader
     image: busybox
-    command: ["sh", "-c", "cat /mnt/lustre-host/testfile.txt"]
+    command: ["sh", "-c", "for i in $(seq 1 20); do content=$(cat /mnt/lustre-host/testfile.txt 2>/dev/null); if [ -n \"$content\" ]; then echo \"$content\"; exit 0; fi; sleep 3; done; echo 'file not found after 60s'; exit 1"]
     volumeMounts:
     - name: lustre-host
       mountPath: /mnt/lustre-host
