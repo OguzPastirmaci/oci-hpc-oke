@@ -411,9 +411,160 @@ jobs:
           echo "  $NODE_COUNT node(s) ready"
           [ "$NODE_COUNT" -ge 1 ] || { echo "FAIL: no nodes found"; exit 1; }
 
+          echo "Health check: node count matches expected pool sizes"
+          EXPECTED=0
+          for pool_key in worker_ops_pool_id worker_cpu_pool_id worker_gpu_pool_id worker_rdma_pool_id; do
+            POOL_ID=$(jq -r ".${pool_key}.value // empty" state.json)
+            if [ -n "$POOL_ID" ] && [ "$POOL_ID" != "null" ]; then
+              SIZE=$(oci ce node-pool get --node-pool-id "$POOL_ID" --query 'data.size' --raw-output 2>/dev/null || echo "0")
+              echo "  $pool_key: size=$SIZE"
+              EXPECTED=$((EXPECTED + SIZE))
+            fi
+          done
+          echo "  expected=$EXPECTED"
+          MAX_POLLS=60
+          POLL=0
+          while true; do
+            ACTUAL=$(kubectl get nodes --no-headers | wc -l | tr -d ' ')
+            if [ "$ACTUAL" -eq "$EXPECTED" ]; then
+              echo "OK:   node count ($ACTUAL) matches expected ($EXPECTED)"
+              break
+            fi
+            POLL=$((POLL + 1))
+            if [ "$POLL" -gt "$MAX_POLLS" ]; then
+              echo "FAIL: node count ($ACTUAL) does not match expected ($EXPECTED) after 30 minutes"
+              exit 1
+            fi
+            echo "  [$POLL/$MAX_POLLS] actual=$ACTUAL expected=$EXPECTED, waiting 30s..."
+            sleep 30
+          done
+
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+
           kubectl wait --for=condition=Ready pods -l k8s-app=kube-dns -n kube-system --timeout=120s
           kubectl wait --for=condition=Ready pods -l k8s-app=kube-proxy -n kube-system --timeout=120s
+
+          echo "Health check: all kube-system pods healthy"
+          BAD_PODS=$(kubectl get pods -n kube-system --no-headers | grep -v -E 'Running|Completed' || true)
+          if [ -n "$BAD_PODS" ]; then
+            echo "FAIL: unhealthy pods in kube-system:"
+            echo "$BAD_PODS"
+            exit 1
+          fi
+          echo "OK:   all kube-system pods are Running or Completed"
+
           echo "Health check: all cluster health checks passed"
+
+      - name: Network health checks
+        if: startsWith(env.TOPOLOGY, 'public')
+        run: |
+          echo "Health check: pod-to-pod connectivity"
+          kubectl apply -f - <<'EOF'
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: net-server
+          spec:
+            restartPolicy: Never
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
+            containers:
+            - name: server
+              image: busybox
+              command: ["sh", "-c", "echo 'net-check-ok' | nc -lp 8080"]
+          EOF
+
+          kubectl wait --for=condition=Ready pod/net-server --timeout=120s
+          SERVER_IP=$(kubectl get pod net-server -o jsonpath='{.status.podIP}')
+          echo "  server pod IP: $SERVER_IP"
+
+          kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: net-client
+          spec:
+            restartPolicy: Never
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
+            containers:
+            - name: client
+              image: busybox
+              command: ["sh", "-c", "for i in \$(seq 1 30); do RESULT=\$(wget -qO- -T 5 http://${SERVER_IP}:8080 2>/dev/null) && echo \"\$RESULT\" && exit 0; sleep 2; done; echo 'timeout'; exit 1"]
+          EOF
+
+          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/net-client --timeout=120s
+          CLIENT_OUTPUT=$(kubectl logs net-client)
+          if [[ "$CLIENT_OUTPUT" != *"net-check-ok"* ]]; then
+            echo "FAIL: pod-to-pod connectivity failed: $CLIENT_OUTPUT"
+            exit 1
+          fi
+          echo "OK:   pod-to-pod connectivity verified"
+
+          echo "Health check: DNS resolution"
+          kubectl apply -f - <<'EOF'
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: dns-checker
+          spec:
+            restartPolicy: Never
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
+            containers:
+            - name: dns
+              image: busybox
+              command: ["sh", "-c", "nslookup kubernetes.default"]
+          EOF
+
+          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/dns-checker --timeout=120s
+          DNS_OUTPUT=$(kubectl logs dns-checker)
+          if ! echo "$DNS_OUTPUT" | grep -qE 'Address.*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "FAIL: DNS resolution failed: $DNS_OUTPUT"
+            exit 1
+          fi
+          echo "OK:   DNS resolution verified"
+          echo "Health check: all network health checks passed"
+
+      - name: GPU resource health checks
+        if: startsWith(env.TOPOLOGY, 'public')
+        run: |
+          GPU_POOL_ID=$(jq -r '.worker_gpu_pool_id.value // empty' state.json)
+          RDMA_POOL_ID=$(jq -r '.worker_rdma_pool_id.value // empty' state.json)
+
+          if [ -z "$GPU_POOL_ID" ] && [ -z "$RDMA_POOL_ID" ]; then
+            echo "No GPU or RDMA pools enabled, skipping GPU resource check"
+            exit 0
+          fi
+
+          echo "Health check: GPU resources advertised on nodes"
+          GPU_NODES=$(kubectl get nodes -o json | jq -r '
+            .items[] |
+            select(
+              (.status.allocatable["nvidia.com/gpu"] // "0" | tonumber) > 0 or
+              (.status.allocatable["amd.com/gpu"] // "0" | tonumber) > 0
+            ) |
+            "\(.metadata.name) nvidia=\(.status.allocatable["nvidia.com/gpu"] // "0") amd=\(.status.allocatable["amd.com/gpu"] // "0")"
+          ')
+
+          if [ -z "$GPU_NODES" ]; then
+            echo "FAIL: GPU/RDMA pool(s) exist but no nodes advertise GPU resources"
+            kubectl get nodes -o custom-columns='NAME:.metadata.name,NVIDIA:.status.allocatable.nvidia\.com/gpu,AMD:.status.allocatable.amd\.com/gpu'
+            exit 1
+          fi
+
+          echo "  GPU nodes found:"
+          echo "$GPU_NODES" | while read -r line; do echo "    $line"; done
+          echo "OK:   GPU resources advertised on nodes"
 
       - name: FSS health checks
         if: startsWith(env.TOPOLOGY, 'public') && contains(env.TOPOLOGY, 'fss')
@@ -697,7 +848,24 @@ jobs:
             exit 1
           fi
 
+          echo "Health check: node-exporter DaemonSet"
+          DS_DESIRED=$(kubectl get daemonset -n monitoring -l app.kubernetes.io/name=prometheus-node-exporter -o jsonpath='{.items[0].status.desiredNumberScheduled}')
+          DS_READY=$(kubectl get daemonset -n monitoring -l app.kubernetes.io/name=prometheus-node-exporter -o jsonpath='{.items[0].status.numberReady}')
+          echo "  desired=$DS_DESIRED ready=$DS_READY"
+          if [ "$DS_DESIRED" != "$DS_READY" ] || [ "$DS_DESIRED" -lt 1 ]; then
+            echo "FAIL: node-exporter DaemonSet desired ($DS_DESIRED) != ready ($DS_READY)"
+            exit 1
+          fi
+          echo "OK:   node-exporter DaemonSet $DS_READY/$DS_DESIRED pods ready"
+
           echo "Health check: all monitoring health checks passed"
+
+      - name: Clean up network test resources
+        if: always() && startsWith(env.TOPOLOGY, 'public')
+        run: |
+          if [ -f "$HOME/.kube/config" ]; then
+            kubectl delete pod net-server net-client dns-checker --ignore-not-found --wait=true --timeout=60s || true
+          fi
 
       - name: Clean up FSS test resources
         if: always() && startsWith(env.TOPOLOGY, 'public') && contains(env.TOPOLOGY, 'fss')
