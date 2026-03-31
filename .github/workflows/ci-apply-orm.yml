@@ -493,8 +493,13 @@ jobs:
               --token-version 2.0.0 \
               --kube-endpoint PUBLIC_ENDPOINT
           else
-            BASTION_ID=$(jq -r '.outputs.bastion_service_id.value' state.json)
-            ENDPOINT_IP=$(jq -r '.outputs.oke_private_endpoint_ip.value' state.json)
+            BASTION_ID=$(jq -r '.outputs.bastion_service_id.value // empty' state.json)
+            ENDPOINT_IP=$(jq -r '.outputs.oke_private_endpoint_ip.value // empty' state.json)
+
+            if [ -z "$BASTION_ID" ] || [ -z "$ENDPOINT_IP" ]; then
+              echo "FAIL: bastion_service_id or oke_private_endpoint_ip is empty -- is create_oci_bastion_service enabled?"
+              exit 1
+            fi
 
             ./files/oke-bastion-service-session.sh \
               --bastion-ocid "$BASTION_ID" \
@@ -507,7 +512,13 @@ jobs:
               --auto-tunnel \
               --non-interactive
 
-            cp "$HOME/.kube/oke-bastion/${CLUSTER_ID}.yaml" "$HOME/.kube/config"
+            BASTION_KCFG="$HOME/.kube/oke-bastion/${CLUSTER_ID}.yaml"
+            if [ ! -f "$BASTION_KCFG" ]; then
+              echo "ERROR: bastion script did not produce kubeconfig at $BASTION_KCFG"
+              ls -la "$HOME/.kube/oke-bastion/" || true
+              exit 1
+            fi
+            cp "$BASTION_KCFG" "$HOME/.kube/config"
             echo "Verifying tunnel connectivity..."
             kubectl --kubeconfig "$HOME/.kube/config" cluster-info
           fi
@@ -1030,11 +1041,15 @@ jobs:
       - name: Tear down bastion tunnel
         if: always() && startsWith(env.TOPOLOGY, 'private')
         run: |
-          TUNNEL_PID=$(lsof -iTCP:6443 -sTCP:LISTEN -t 2>/dev/null || true)
-          if [ -n "$TUNNEL_PID" ]; then
-            kill "$TUNNEL_PID" 2>/dev/null || true
-            echo "Killed SSH tunnel (PID: $TUNNEL_PID)"
-          fi
+          for pidfile in /tmp/oke-bastion-tunnel-*.pid; do
+            [ -f "$pidfile" ] || continue
+            PID=$(cat "$pidfile")
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+              kill "$PID" 2>/dev/null || true
+              echo "Killed SSH tunnel (PID: $PID)"
+            fi
+            rm -f "$pidfile"
+          done
           rm -f "$HOME/.kube/config" "$HOME/.kube/oke-bastion/"*.yaml 2>/dev/null || true
 
       - name: Destroy stack
