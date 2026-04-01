@@ -284,7 +284,10 @@ resource "oci_lustre_file_storage_lustre_file_system" "lustre" {
   display_name               = format("lustre-fs-%s", local.state_id)
   nsg_ids                    = [one(oci_core_network_security_group.lustre_nsg[*].id)]
 
-  depends_on = [oci_core_network_security_group_security_rule.lustre_rules]
+  depends_on = [
+    oci_core_network_security_group_security_rule.lustre_rules,
+    oci_identity_policy.oke_quickstart_storage,
+  ]
 
   lifecycle {
     ignore_changes = [defined_tags]
