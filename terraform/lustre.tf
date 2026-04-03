@@ -264,6 +264,17 @@ resource "oci_core_subnet" "lustre_subnet" {
   }
 }
 
+resource "time_sleep" "wait_for_lustre_prerequisites" {
+  count = var.create_lustre ? 1 : 0
+
+  depends_on = [
+    oci_core_network_security_group_security_rule.lustre_rules,
+    oci_identity_policy.oke_quickstart_storage,
+  ]
+
+  create_duration = "30s"
+}
+
 resource "oci_lustre_file_storage_lustre_file_system" "lustre" {
   count = var.create_lustre ? 1 : 0
 
@@ -284,10 +295,7 @@ resource "oci_lustre_file_storage_lustre_file_system" "lustre" {
   display_name               = format("lustre-fs-%s", local.state_id)
   nsg_ids                    = [one(oci_core_network_security_group.lustre_nsg[*].id)]
 
-  depends_on = [
-    oci_core_network_security_group_security_rule.lustre_rules,
-    oci_identity_policy.oke_quickstart_storage,
-  ]
+  depends_on = [time_sleep.wait_for_lustre_prerequisites]
 
   lifecycle {
     ignore_changes = [defined_tags]
