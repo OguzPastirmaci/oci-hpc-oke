@@ -874,7 +874,7 @@ jobs:
             containers:
             - name: check
               image: busybox
-              command: ["sh", "-c", "grep -q lustre /host-proc/mounts && echo MOUNTED || echo NOT_MOUNTED"]
+              command: ["sh", "-c", "grep -q ' ${LUSTRE_MOUNT_PATH} lustre ' /host-proc/mounts && echo MOUNTED || echo NOT_MOUNTED"]
               volumeMounts:
               - name: host-proc
                 mountPath: /host-proc
