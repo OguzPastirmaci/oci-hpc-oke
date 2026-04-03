@@ -855,7 +855,45 @@ jobs:
           echo "Health check: Lustre OS-level mount (hostPath)"
           LUSTRE_MOUNT_PATH=$(jq -r '.lustre_mount_path.value // "/mnt/oci-lustre"' state.json)
           echo "  host mount path: $LUSTRE_MOUNT_PATH"
+
+          # Check if the host mount exists on the writer node before testing hostPath.
+          # Ops pool nodes without the Lustre client kernel module won't have the mount.
           kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: lustre-mount-check
+          spec:
+            restartPolicy: Never
+            nodeName: ${LUSTRE_WRITER_NODE}
+            tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+            - key: amd.com/gpu
+              operator: Exists
+            containers:
+            - name: check
+              image: busybox
+              command: ["sh", "-c", "grep -q lustre /host-proc/mounts && echo MOUNTED || echo NOT_MOUNTED"]
+              volumeMounts:
+              - name: host-proc
+                mountPath: /host-proc
+                readOnly: true
+            volumes:
+            - name: host-proc
+              hostPath:
+                path: /proc
+                type: Directory
+          EOF
+          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/lustre-mount-check --timeout=60s
+          MOUNT_STATUS=$(kubectl logs lustre-mount-check)
+          kubectl delete pod lustre-mount-check --ignore-not-found --wait=false
+
+          if [[ "$MOUNT_STATUS" != *"MOUNTED"* ]]; then
+            echo "SKIP: Lustre not mounted on host (node lacks Lustre client kernel module)"
+            echo "Health check: all Lustre health checks passed"
+          else
+            kubectl apply -f - <<EOF
           apiVersion: v1
           kind: Pod
           metadata:
@@ -881,14 +919,15 @@ jobs:
                 path: ${LUSTRE_MOUNT_PATH}
                 type: Directory
           EOF
-          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/lustre-hostpath-reader --timeout=120s
-          HOST_CONTENT=$(kubectl logs lustre-hostpath-reader)
-          if [[ "$HOST_CONTENT" != *"lustre-test-content"* ]]; then
-            echo "FAIL: Lustre hostPath reader output does not contain expected content: $HOST_CONTENT"
-            exit 1
+            kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/lustre-hostpath-reader --timeout=120s
+            HOST_CONTENT=$(kubectl logs lustre-hostpath-reader)
+            if [[ "$HOST_CONTENT" != *"lustre-test-content"* ]]; then
+              echo "FAIL: Lustre hostPath reader output does not contain expected content: $HOST_CONTENT"
+              exit 1
+            fi
+            echo "OK:   Lustre hostPath reader output: $HOST_CONTENT"
+            echo "Health check: all Lustre health checks passed"
           fi
-          echo "OK:   Lustre hostPath reader output: $HOST_CONTENT"
-          echo "Health check: all Lustre health checks passed"
 
       - name: Monitoring health checks
         if: contains(env.TOPOLOGY, 'monitoring')
@@ -955,7 +994,7 @@ jobs:
         if: always() && contains(env.TOPOLOGY, 'lustre')
         run: |
           if [ -f "$HOME/.kube/config" ]; then
-            kubectl delete pod lustre-writer lustre-reader lustre-hostpath-reader --ignore-not-found --wait=true --timeout=60s || true
+            kubectl delete pod lustre-writer lustre-reader lustre-hostpath-reader lustre-mount-check --ignore-not-found --wait=true --timeout=60s || true
             kubectl delete pvc lustre-test-pvc --ignore-not-found --wait=true --timeout=120s || true
           fi
 
