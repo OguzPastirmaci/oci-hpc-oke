@@ -852,14 +852,14 @@ jobs:
           fi
           echo "OK:   Lustre reader output: $CONTENT"
 
-          echo "Health check: Lustre OS-level mount (hostPath)"
-          LUSTRE_MOUNT_PATH=$(jq -r '.lustre_mount_path.value // "/mnt/oci-lustre"' state.json)
-          echo "  host mount path: $LUSTRE_MOUNT_PATH"
-
-          # Use type: "" so the pod can start even if the host mount is absent.
-          # Nodes without the Lustre kernel module won't have the mount — the pod
-          # command detects this and we skip instead of failing.
-          kubectl apply -f - <<EOF
+          # The hostPath test only works on nodes with the Lustre kernel module
+          # (GPU/RDMA worker images). Skip when only ops pool nodes are available.
+          TFVARS_FILE="test/tfvars/tf/${TOPOLOGY}.tfvars"
+          if grep -qE 'worker_(gpu|rdma)_enabled\s*=\s*true' "$TFVARS_FILE" 2>/dev/null; then
+            echo "Health check: Lustre OS-level mount (hostPath)"
+            LUSTRE_MOUNT_PATH=$(jq -r '.lustre_mount_path.value // "/mnt/oci-lustre"' state.json)
+            echo "  host mount path: $LUSTRE_MOUNT_PATH"
+            kubectl apply -f - <<EOF
           apiVersion: v1
           kind: Pod
           metadata:
@@ -875,7 +875,7 @@ jobs:
             containers:
             - name: reader
               image: busybox
-              command: ["sh", "-c", "if [ ! -d /mnt/lustre-host ] || ! mountpoint -q /mnt/lustre-host; then echo NO_HOST_MOUNT; exit 0; fi; cat /mnt/lustre-host/testfile.txt 2>/dev/null || echo FILE_NOT_FOUND"]
+              command: ["sh", "-c", "for i in \$(seq 1 20); do content=\$(cat /mnt/lustre-host/testfile.txt 2>/dev/null); if [ -n \"\$content\" ]; then echo \"\$content\"; exit 0; fi; sleep 3; done; echo 'file not found after 60s'; exit 1"]
               volumeMounts:
               - name: lustre-host
                 mountPath: /mnt/lustre-host
@@ -883,16 +883,17 @@ jobs:
             - name: lustre-host
               hostPath:
                 path: ${LUSTRE_MOUNT_PATH}
+                type: Directory
           EOF
-          kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/lustre-hostpath-reader --timeout=120s
-          HOST_CONTENT=$(kubectl logs lustre-hostpath-reader)
-          if [[ "$HOST_CONTENT" == *"NO_HOST_MOUNT"* ]]; then
-            echo "SKIP: Lustre not mounted on host (node lacks Lustre client kernel module)"
-          elif [[ "$HOST_CONTENT" != *"lustre-test-content"* ]]; then
-            echo "FAIL: Lustre hostPath reader output does not contain expected content: $HOST_CONTENT"
-            exit 1
-          else
+            kubectl wait --for='jsonpath={.status.phase}=Succeeded' pod/lustre-hostpath-reader --timeout=120s
+            HOST_CONTENT=$(kubectl logs lustre-hostpath-reader)
+            if [[ "$HOST_CONTENT" != *"lustre-test-content"* ]]; then
+              echo "FAIL: Lustre hostPath reader output does not contain expected content: $HOST_CONTENT"
+              exit 1
+            fi
             echo "OK:   Lustre hostPath reader output: $HOST_CONTENT"
+          else
+            echo "SKIP: Lustre hostPath test (no GPU/RDMA pools with Lustre kernel module)"
           fi
           echo "Health check: all Lustre health checks passed"
 
