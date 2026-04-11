@@ -341,7 +341,7 @@ data:
                         existing_labels = node.metadata.labels or {}
                         node_map[node_name] = (provider_id, compartment_id, existing_labels)
 
-                log.info("Found %d GPU nodes (%d with instance IDs)", len(nodes), len(node_map))
+                log.info("Found %d nodes (%d with instance IDs)", len(nodes), len(node_map))
 
                 # List all compute hosts once
                 all_hosts = _list_all_compute_hosts(compute_client, tenant_id)

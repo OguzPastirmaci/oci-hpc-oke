@@ -76,13 +76,21 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              nsenter --target 1 --mount -- nvidia-smi -q 2>/dev/null | grep -m1 'Tray Index' | awk -F': ' '{print $2}' | tr -d ' ' > /tmp/gpu-info/tray_index
-              val=$(cat /tmp/gpu-info/tray_index)
-              if [ -n "$val" ]; then
-                echo "GPU info: tray=$val"
-              else
-                echo "Tray index not available"
-              fi
+              shape=$(python3 -c 'import urllib.request as u; r=u.Request("http://169.254.169.254/opc/v2/instance/shape", headers={"Authorization":"Bearer Oracle"}); print(u.urlopen(r, timeout=5).read().decode().strip())' 2>/dev/null || true)
+              case "$shape" in
+                *GB200*|*GB300*)
+                  val=$(nsenter --target 1 --mount -- nvidia-smi -q 2>/dev/null | grep -m1 'Tray Index' | awk -F': ' '{print $2}' | tr -d ' ')
+                  if [ -n "$val" ] && [ "$val" != "N/A" ]; then
+                    echo "$val" > /tmp/gpu-info/tray_index
+                    echo "GPU info: tray=$val"
+                  else
+                    echo "Tray index not available"
+                  fi
+                  ;;
+                *)
+                  echo "Shape $shape: tray index not applicable"
+                  ;;
+              esac
           volumeMounts:
             - name: gpu-info
               mountPath: /tmp/gpu-info
