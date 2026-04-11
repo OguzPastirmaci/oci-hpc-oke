@@ -1,5 +1,6 @@
 name: CI - Plan (Both)
 # Runs validation, Terraform plan, and ORM plan jobs on /ok-to-run-plan
+# Smoke-test marker for fork PR checkout validation.
 
 on:
   workflow_dispatch:
