@@ -504,6 +504,14 @@ def main():
                         mid = len(group) // 2
                         halves = [group[:mid], group[mid:]]
                         for half in halves:
+                            if len(half) < 2:
+                                # Single node: inter-node NCCL test not possible.
+                                # Mark as suspect for cross-validation.
+                                for h in half:
+                                    isolated_suspects.add(h)
+                                print(f"  {YELLOW}SKIP: {hosts_display(half)} (single node, "
+                                      f"queued for cross-validation){RESET}", flush=True)
+                                continue
                             threshold = BW_THRESHOLD_2NODE if len(half) == 2 else BW_THRESHOLD_DEFAULT
                             label = f"bisect-{hosts_display(half)}"
                             logfile = LOG_DIR / f"bisect_{'_'.join(short_name(h) for h in half)}.log"
@@ -526,7 +534,7 @@ def main():
             print(f"\n{GREEN}Bisect found no individual suspect nodes "
                   f"(issue may only appear at scale){RESET}", flush=True)
 
-    # Phase 4: Cross-validate suspect nodes against known-good nodes
+    # Phase 4: Cross-validate suspect nodes against multiple known-good nodes
     if isolated_suspects:
         # Find nodes that only appeared in PASS results (never in any failed/suspect test)
         failed_nodes = set()
@@ -538,25 +546,34 @@ def main():
         if not good_nodes:
             # Fallback: pick any node not in isolated_suspects
             good_nodes = [h for h in hosts if h not in isolated_suspects]
-        if len(good_nodes) >= 1:
-            good_node = good_nodes[0]
 
+        num_validators = min(3, len(good_nodes))
+        validators = good_nodes[:num_validators]
+
+        if validators:
             print(f"\n{'='*50}")
             print(f"  CROSS-VALIDATION PHASE")
-            print(f"  Testing {len(isolated_suspects)} suspect node(s) paired with known-good node {short_name(good_node)}")
+            print(f"  Testing {len(isolated_suspects)} suspect node(s) against "
+                  f"{num_validators} known-good node(s): {hosts_display(validators)}")
             print(f"{'='*50}", flush=True)
 
             confirmed_bad = []
             confirmed_good = []
 
             for suspect in sorted(isolated_suspects, key=short_name):
-                label = f"validate-{short_name(suspect)}"
-                logfile = LOG_DIR / f"validate_{short_name(suspect)}.log"
-                rc, output = run_nccl_test([suspect, good_node], logfile)
-                bw = extract_4g_busbw(output)
-                r = check_result(label, rc, bw, BW_THRESHOLD_2NODE, [suspect, good_node])
-                all_results.append(r)
-                if r[0] in ("SUSPECT", "FAIL"):
+                fail_count = 0
+                for good_node in validators:
+                    label = f"validate-{short_name(suspect)}-vs-{short_name(good_node)}"
+                    logfile = LOG_DIR / f"validate_{short_name(suspect)}_vs_{short_name(good_node)}.log"
+                    rc, output = run_nccl_test([suspect, good_node], logfile)
+                    bw = extract_4g_busbw(output)
+                    r = check_result(label, rc, bw, BW_THRESHOLD_2NODE, [suspect, good_node])
+                    all_results.append(r)
+                    if r[0] in ("SUSPECT", "FAIL"):
+                        fail_count += 1
+
+                # Any failure confirms bad (protects against path-specific faults)
+                if fail_count >= 1:
                     confirmed_bad.append(suspect)
                 else:
                     confirmed_good.append(suspect)

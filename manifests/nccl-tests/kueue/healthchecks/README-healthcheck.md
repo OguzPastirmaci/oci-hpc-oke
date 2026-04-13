@@ -1,4 +1,4 @@
-# NCCL Health Check for BM.GPU.H100.8
+# NCCL Health Check
 
 Runs NCCL `all_reduce_perf` across GPU nodes to identify bad nodes or degraded RDMA performance.
 
@@ -10,7 +10,7 @@ Runs NCCL `all_reduce_perf` across GPU nodes to identify bad nodes or degraded R
 4. Runs group tests (pairs, groups of 4, groups of 8, etc.) depending on configuration
 5. Reports per-test bandwidth and flags results below threshold as SUSPECT
 6. Bisects suspect groups to isolate individual bad nodes
-7. Cross-validates suspect nodes by pairing them with a known-good node
+7. Cross-validates suspect nodes against up to 3 known-good nodes
 8. Prints a summary with suspect node frequency and confirmed bad nodes
 
 ## Quick start
@@ -24,7 +24,6 @@ kubectl logs -f $(kubectl get pods -l nccl-test-replica=mpi-launcher -o jsonpath
 
 # Clean up
 kubectl delete mpijob nccl-healthcheck
-kubectl delete configmap nccl-healthcheck-script
 kubectl delete clusterrolebinding nccl-healthcheck-node-reader
 kubectl delete clusterrole nccl-healthcheck-node-reader
 kubectl delete sa nccl-healthcheck
@@ -60,11 +59,11 @@ Depending on `TEST_MODE`:
 
 ### Phase 3: Bisect
 
-For each suspect group with more than 2 nodes, recursively splits in half and tests each half until reaching pairs. Collects individual suspect nodes.
+For each suspect group with more than 2 nodes, recursively splits in half and tests each half until reaching pairs. Single-node halves (from odd-sized splits) are skipped and sent directly to cross-validation. Collects individual suspect nodes.
 
 ### Phase 4: Cross-validation
 
-Each isolated suspect node is paired with a known-good reference node (one that only appeared in PASS results). If the pair still fails, the node is confirmed bad. If it passes, the node is cleared.
+Each isolated suspect node is tested against up to 3 known-good reference nodes (nodes that only appeared in PASS results). If the suspect fails against any validator, it is confirmed bad. It is only cleared if it passes all validators.
 
 ## Time estimates
 
@@ -199,6 +198,6 @@ kubectl exec $LAUNCHER -- cat /tmp/nccl-healthcheck/pair_10.140.84.146_10.140.65
 # View a bisect result
 kubectl exec $LAUNCHER -- cat /tmp/nccl-healthcheck/bisect_10.140.84.146_10.140.65.231.log
 
-# View a cross-validation result
-kubectl exec $LAUNCHER -- cat /tmp/nccl-healthcheck/validate_10.140.84.146.log
+# View a cross-validation result (one log per suspect-validator pair)
+kubectl exec $LAUNCHER -- cat /tmp/nccl-healthcheck/validate_10.140.84.146_vs_10.140.65.237.log
 ```
