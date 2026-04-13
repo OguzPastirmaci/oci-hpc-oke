@@ -60,7 +60,7 @@ jobs:
     steps:
       - name: React to trigger comment
         if: github.event_name == 'issue_comment'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           script: |
             await github.rest.reactions.createForIssueComment({
@@ -73,7 +73,7 @@ jobs:
       - name: Resolve PR context from comment
         id: pr-comment
         if: github.event_name == 'issue_comment'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           PR_NUMBER: ${{ github.event.issue.number }}
         with:
@@ -91,7 +91,7 @@ jobs:
       - name: Resolve PR context from workflow input
         id: pr-dispatch
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           PR_NUMBER: ${{ github.event.inputs.pr_number }}
         with:
@@ -546,7 +546,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Post result comment
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           VALIDATE_RESULT: ${{ needs.validate.result }}
           PLAN_TF_RESULT: ${{ needs.plan-terraform.result }}

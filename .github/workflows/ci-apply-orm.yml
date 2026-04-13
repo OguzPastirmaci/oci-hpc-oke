@@ -85,7 +85,7 @@ jobs:
     steps:
       - name: React to trigger comment
         if: github.event_name == 'issue_comment'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           script: |
             await github.rest.reactions.createForIssueComment({
@@ -98,7 +98,7 @@ jobs:
       - name: Resolve PR context from comment
         id: pr-comment
         if: github.event_name == 'issue_comment'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           PR_NUMBER: ${{ github.event.issue.number }}
         with:
@@ -115,7 +115,7 @@ jobs:
       - name: Resolve PR context from workflow dispatch
         id: pr-dispatch
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           PR_NUMBER: ${{ github.event.inputs.pr_number }}
         with:
@@ -132,7 +132,7 @@ jobs:
       - name: Resolve PR context from workflow call
         id: pr-call
         if: github.event_name == 'workflow_call'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
         with:
@@ -382,7 +382,7 @@ jobs:
 
       - name: Post result comment
         if: always() && needs.check-orm-trigger.outputs.pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
