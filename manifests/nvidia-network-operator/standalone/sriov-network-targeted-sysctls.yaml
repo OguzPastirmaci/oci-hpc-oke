@@ -6,7 +6,6 @@ metadata:
 spec:
   resourceName: rdma-vf
   networkNamespace: default
-  spoofChk: "off"
   ipam: |
     {
       "type": "nv-ipam",

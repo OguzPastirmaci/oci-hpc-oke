@@ -128,6 +128,12 @@ path validation; setting only the interface value cannot override a nonzero
 global value. This variant avoids applying the positive ARP and `accept_local`
 values to the pod's primary `eth0` interface.
 
+The targeted variant also omits `spoofChk`. Consequently, SR-IOV CNI does not
+change the VF's existing spoof-check state during pod attachment. This is
+intentional for testing; record the PF-reported VF spoof-check state before and
+during allocation. The fully validated `sriov-network.yaml` explicitly used
+`spoofChk: "off"`.
+
 The 2026-06-27 validation record below used the fully namespace-wide
 `sriov-network.yaml`. The targeted variant requires the same route, sysctl,
 ping-pong, and NCCL checks before production use.
