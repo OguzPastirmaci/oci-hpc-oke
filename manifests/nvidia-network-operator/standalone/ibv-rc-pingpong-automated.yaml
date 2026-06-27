@@ -1,0 +1,275 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rdma-vf-pingpong-automated
+  labels:
+    app: rdma-vf-pingpong-automated
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rdma-vf-pingpong-automated
+  labels:
+    app: rdma-vf-pingpong-automated
+rules:
+  # The server publishes its dynamically allocated VF address on its own
+  # short-lived pod. The client reads that annotation to discover its peer.
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames:
+      - rdma-vf-ping-auto-b
+    verbs: ["get", "patch"]
+  # The client includes the server result in its own log so one logs command
+  # returns both sides of the test.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames:
+      - rdma-vf-ping-auto-b
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rdma-vf-pingpong-automated
+  labels:
+    app: rdma-vf-pingpong-automated
+subjects:
+  - kind: ServiceAccount
+    name: rdma-vf-pingpong-automated
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rdma-vf-pingpong-automated
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rdma-vf-ping-auto-a
+  labels:
+    app: rdma-vf-pingpong-automated
+    rdma-vf-pingpong-role: client
+  annotations:
+    k8s.v1.cni.cncf.io/networks: rdma-vf
+spec:
+  serviceAccountName: rdma-vf-pingpong-automated
+  restartPolicy: Never
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                  - BM.GPU.B4.8
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: rdma-vf-pingpong-automated
+          topologyKey: kubernetes.io/hostname
+  volumes:
+    - name: devinf
+      hostPath:
+        path: /dev/infiniband
+  containers:
+    - name: client
+      image: iad.ocir.io/idxzjcdglx2s/nccl-tests:cuda-13.1.1-ubuntu-24.04-nccl-2.29.3-020926.1
+      command: ["bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+
+          server_pod=rdma-vf-ping-auto-b
+          annotation=rdma-vf-pingpong.nvidia.com/server-ip
+          api="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
+          token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          namespace=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+          auth_header="Authorization: Bearer ${token}"
+          server_url="${api}/api/v1/namespaces/${namespace}/pods/${server_pod}"
+
+          echo "Waiting for the server to publish its VF address..."
+          server_ip=
+          for attempt in $(seq 1 300); do
+            server_json=$(curl -fsS --cacert "$ca" -H "$auth_header" "$server_url" 2>/dev/null || true)
+            server_ip=$(jq -r --arg key "$annotation" '.metadata.annotations[$key] // empty' <<<"$server_json" 2>/dev/null || true)
+            server_phase=$(jq -r '.status.phase // empty' <<<"$server_json" 2>/dev/null || true)
+            if [ -n "$server_ip" ]; then
+              break
+            fi
+            if [ "$server_phase" = "Failed" ] || [ "$server_phase" = "Succeeded" ]; then
+              echo "ERROR: server entered terminal phase $server_phase before publishing its VF address" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          if [ -z "$server_ip" ]; then
+            echo "ERROR: timed out waiting for the server VF address" >&2
+            exit 1
+          fi
+
+          client_ip=$(ip -4 -o addr show dev net1 | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
+          client_dev=$(rdma link show | awk 'NR == 1 { split($2, a, "/"); print a[1] }')
+          client_rdma_count=$(rdma link show | wc -l)
+          if [ -z "$client_ip" ] || [ -z "$client_dev" ]; then
+            echo "ERROR: failed to discover the client VF IP or RDMA device" >&2
+            exit 1
+          fi
+          if [ "$client_rdma_count" -ne 1 ]; then
+            echo "ERROR: RDMA isolation check failed: client sees $client_rdma_count links" >&2
+            exit 1
+          fi
+
+          echo "Client: pod=$HOSTNAME ip=$client_ip device=$client_dev rdma_links=$client_rdma_count"
+          echo "Server VF IP: $server_ip"
+          echo "Client route to server:"
+          ip route get "$server_ip"
+          echo "Client RDMA link:"
+          rdma link show
+
+          set +e
+          timeout 60 ibv_rc_pingpong -d "$client_dev" -g 3 "$server_ip"
+          client_rc=$?
+          set -e
+
+          echo "Waiting for the server process to exit..."
+          server_phase=
+          for attempt in $(seq 1 60); do
+            server_json=$(curl -fsS --cacert "$ca" -H "$auth_header" "$server_url" 2>/dev/null || true)
+            server_phase=$(jq -r '.status.phase // empty' <<<"$server_json" 2>/dev/null || true)
+            if [ "$server_phase" = "Succeeded" ] || [ "$server_phase" = "Failed" ]; then
+              break
+            fi
+            sleep 1
+          done
+
+          echo "Server output:"
+          curl -fsS --cacert "$ca" -H "$auth_header" "${server_url}/log" || true
+          echo
+
+          if [ "$client_rc" -ne 0 ] || [ "$server_phase" != "Succeeded" ]; then
+            echo "FAIL: ibv_rc_pingpong client_rc=$client_rc server_phase=${server_phase:-unknown}" >&2
+            exit 1
+          fi
+
+          echo "PASS: ibv_rc_pingpong completed over isolated VFs without a manual route"
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["IPC_LOCK"]
+      volumeMounts:
+        - name: devinf
+          mountPath: /dev/infiniband
+      resources:
+        limits:
+          nvidia.com/rdma-vf: 1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rdma-vf-ping-auto-b
+  labels:
+    app: rdma-vf-pingpong-automated
+    rdma-vf-pingpong-role: server
+  annotations:
+    k8s.v1.cni.cncf.io/networks: rdma-vf
+spec:
+  serviceAccountName: rdma-vf-pingpong-automated
+  restartPolicy: Never
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                  - BM.GPU.B4.8
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: rdma-vf-pingpong-automated
+          topologyKey: kubernetes.io/hostname
+  volumes:
+    - name: devinf
+      hostPath:
+        path: /dev/infiniband
+  containers:
+    - name: server
+      image: iad.ocir.io/idxzjcdglx2s/nccl-tests:cuda-13.1.1-ubuntu-24.04-nccl-2.29.3-020926.1
+      command: ["bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+
+          annotation=rdma-vf-pingpong.nvidia.com/server-ip
+          api="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
+          token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          namespace=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+          auth_header="Authorization: Bearer ${token}"
+          pod_url="${api}/api/v1/namespaces/${namespace}/pods/${HOSTNAME}"
+
+          server_ip=$(ip -4 -o addr show dev net1 | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
+          server_dev=$(rdma link show | awk 'NR == 1 { split($2, a, "/"); print a[1] }')
+          server_rdma_count=$(rdma link show | wc -l)
+          if [ -z "$server_ip" ] || [ -z "$server_dev" ]; then
+            echo "ERROR: failed to discover the server VF IP or RDMA device" >&2
+            exit 1
+          fi
+          if [ "$server_rdma_count" -ne 1 ]; then
+            echo "ERROR: RDMA isolation check failed: server sees $server_rdma_count links" >&2
+            exit 1
+          fi
+
+          echo "Server: pod=$HOSTNAME ip=$server_ip device=$server_dev rdma_links=$server_rdma_count"
+          echo "Server RDMA link:"
+          rdma link show
+
+          timeout 120 ibv_rc_pingpong -d "$server_dev" -g 3 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          sleep 1
+          if ! kill -0 "$server_pid" 2>/dev/null; then
+            echo "ERROR: ibv_rc_pingpong server exited before becoming ready" >&2
+            wait "$server_pid"
+          fi
+
+          patch=$(jq -cn --arg key "$annotation" --arg value "$server_ip" '{metadata:{annotations:{($key):$value}}}')
+          curl -fsS --cacert "$ca" \
+            -H "$auth_header" \
+            -H 'Content-Type: application/merge-patch+json' \
+            -X PATCH \
+            --data "$patch" \
+            "$pod_url" >/dev/null
+          echo "Published server VF IP for the client"
+
+          set +e
+          wait "$server_pid"
+          server_rc=$?
+          set -e
+          if [ "$server_rc" -ne 0 ]; then
+            echo "FAIL: ibv_rc_pingpong server_rc=$server_rc" >&2
+            exit "$server_rc"
+          fi
+          echo "Server completed successfully"
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["IPC_LOCK"]
+      volumeMounts:
+        - name: devinf
+          mountPath: /dev/infiniband
+      resources:
+        limits:
+          nvidia.com/rdma-vf: 1

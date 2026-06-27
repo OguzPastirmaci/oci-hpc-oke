@@ -1,0 +1,416 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rdma-vf-write-bw-automated
+  labels:
+    app: rdma-vf-write-bw-automated
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rdma-vf-write-bw-automated
+  labels:
+    app: rdma-vf-write-bw-automated
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames:
+      - rdma-vf-write-bw-server
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    resourceNames:
+      - rdma-vf-write-bw-server
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rdma-vf-write-bw-automated
+  labels:
+    app: rdma-vf-write-bw-automated
+subjects:
+  - kind: ServiceAccount
+    name: rdma-vf-write-bw-automated
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rdma-vf-write-bw-automated
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rdma-vf-write-bw-automated
+  labels:
+    app: rdma-vf-write-bw-automated
+data:
+  server.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    rail_count=16
+    base_port=18515
+    annotation=rdma-vf-write-bw.nvidia.com/server-rails
+    api="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
+    token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    namespace=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+    auth_header="Authorization: Bearer ${token}"
+    pod_url="${api}/api/v1/namespaces/${namespace}/pods/${HOSTNAME}"
+    test_options=(-F -x 3 --report_gbits -R -T 41 -q 4 -s 65536 -D 10)
+
+    declare -a server_pids
+    published_rails=
+
+    for index in $(seq 1 "$rail_count"); do
+      interface="net${index}"
+      server_ip=$(ip -4 -o addr show dev "$interface" | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
+      server_device=$(rdma link show | awk -v netdev="$interface" '$0 ~ ("netdev " netdev "($| )") { split($2, a, "/"); print a[1] }')
+      port=$((base_port + index - 1))
+
+      if [ -z "$server_ip" ] || [ -z "$server_device" ]; then
+        echo "ERROR: failed to map server rail $index ($interface) to an IP and RDMA device" >&2
+        exit 1
+      fi
+
+      entry="${index}|${interface}|${server_ip}|${server_device}|${port}"
+      published_rails="${published_rails}${published_rails:+,}${entry}"
+      echo "Server rail $index: interface=$interface ip=$server_ip device=$server_device port=$port"
+
+      timeout 180 ib_write_bw \
+        "${test_options[@]}" \
+        -p "$port" \
+        -d "$server_device" \
+        >"/tmp/server-rail-${index}.log" 2>&1 &
+      server_pids[$index]=$!
+    done
+
+    cleanup() {
+      for index in $(seq 1 "$rail_count"); do
+        pid=${server_pids[$index]:-}
+        if [ -n "$pid" ]; then
+          kill "$pid" 2>/dev/null || true
+        fi
+      done
+    }
+    trap cleanup EXIT
+
+    sleep 2
+    for index in $(seq 1 "$rail_count"); do
+      if ! kill -0 "${server_pids[$index]}" 2>/dev/null; then
+        echo "ERROR: ib_write_bw server for rail $index exited before publication" >&2
+        cat "/tmp/server-rail-${index}.log" >&2 || true
+        exit 1
+      fi
+    done
+
+    patch=$(python3 -c \
+      'import json,sys; print(json.dumps({"metadata":{"annotations":{sys.argv[1]:sys.argv[2]}}}))' \
+      "$annotation" "$published_rails")
+    curl -fsS --cacert "$ca" \
+      -H "$auth_header" \
+      -H 'Content-Type: application/merge-patch+json' \
+      -X PATCH \
+      --data "$patch" \
+      "$pod_url" >/dev/null
+    echo "Published all $rail_count server rails for the client"
+
+    failed=0
+    for index in $(seq 1 "$rail_count"); do
+      set +e
+      wait "${server_pids[$index]}"
+      rc=$?
+      set -e
+      echo "===== server rail $index rc=$rc ====="
+      cat "/tmp/server-rail-${index}.log"
+      if [ "$rc" -ne 0 ]; then
+        failed=1
+      fi
+    done
+
+    if [ "$failed" -ne 0 ]; then
+      echo "FAIL: one or more ib_write_bw server rails failed" >&2
+      exit 1
+    fi
+    echo "Server completed all $rail_count rails successfully"
+
+  client.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    rail_count=16
+    server_pod=rdma-vf-write-bw-server
+    annotation=rdma-vf-write-bw.nvidia.com/server-rails
+    api="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
+    token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    namespace=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+    auth_header="Authorization: Bearer ${token}"
+    server_url="${api}/api/v1/namespaces/${namespace}/pods/${server_pod}"
+    test_options=(-F -x 3 --report_gbits -R -T 41 -q 4 -s 65536 -D 10)
+
+    echo "Waiting for the server to publish all VF rails..."
+    server_rails=
+    for attempt in $(seq 1 300); do
+      server_json=$(curl -fsS --cacert "$ca" -H "$auth_header" "$server_url" 2>/dev/null || true)
+      server_rails=$(python3 -c \
+        'import json,sys; d=json.load(sys.stdin); print(d.get("metadata",{}).get("annotations",{}).get(sys.argv[1],""))' \
+        "$annotation" <<<"$server_json" 2>/dev/null || true)
+      server_phase=$(python3 -c \
+        'import json,sys; d=json.load(sys.stdin); print(d.get("status",{}).get("phase",""))' \
+        <<<"$server_json" 2>/dev/null || true)
+      if [ -n "$server_rails" ]; then
+        break
+      fi
+      if [ "$server_phase" = "Failed" ] || [ "$server_phase" = "Succeeded" ]; then
+        echo "ERROR: server entered terminal phase $server_phase before publishing its rails" >&2
+        exit 1
+      fi
+      sleep 2
+    done
+    if [ -z "$server_rails" ]; then
+      echo "ERROR: timed out waiting for server rail information" >&2
+      exit 1
+    fi
+
+    declare -A server_ips
+    declare -A server_ports
+    declare -A server_devices
+    while IFS='|' read -r index interface ip device port; do
+      server_ips[$index]=$ip
+      server_ports[$index]=$port
+      server_devices[$index]=$device
+    done < <(tr ',' '\n' <<<"$server_rails")
+
+    if [ "${#server_ips[@]}" -ne "$rail_count" ]; then
+      echo "ERROR: expected $rail_count published server rails, found ${#server_ips[@]}" >&2
+      exit 1
+    fi
+
+    declare -a client_pids
+    declare -a client_ips
+    declare -a client_devices
+    route_failed=0
+
+    for index in $(seq 1 "$rail_count"); do
+      interface="net${index}"
+      client_ip=$(ip -4 -o addr show dev "$interface" | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
+      client_device=$(rdma link show | awk -v netdev="$interface" '$0 ~ ("netdev " netdev "($| )") { split($2, a, "/"); print a[1] }')
+      server_ip=${server_ips[$index]:-}
+      port=${server_ports[$index]:-}
+
+      if [ -z "$client_ip" ] || [ -z "$client_device" ] || [ -z "$server_ip" ] || [ -z "$port" ]; then
+        echo "ERROR: incomplete client/server mapping for rail $index" >&2
+        exit 1
+      fi
+
+      client_ips[$index]=$client_ip
+      client_devices[$index]=$client_device
+      route=$(ip route get "$server_ip" from "$client_ip")
+      echo "Client rail $index: interface=$interface ip=$client_ip device=$client_device -> server_ip=$server_ip server_device=${server_devices[$index]} port=$port"
+      echo "Client rail $index route: $route"
+      if ! grep -q "dev ${interface}" <<<"$route"; then
+        echo "ERROR: source route for rail $index did not select $interface" >&2
+        route_failed=1
+      fi
+
+      timeout 180 ib_write_bw \
+        "${test_options[@]}" \
+        -p "$port" \
+        -d "$client_device" \
+        "$server_ip" \
+        >"/tmp/client-rail-${index}.log" 2>&1 &
+      client_pids[$index]=$!
+    done
+
+    cleanup() {
+      for index in $(seq 1 "$rail_count"); do
+        pid=${client_pids[$index]:-}
+        if [ -n "$pid" ]; then
+          kill "$pid" 2>/dev/null || true
+        fi
+      done
+    }
+    trap cleanup EXIT
+
+    failed=$route_failed
+    for index in $(seq 1 "$rail_count"); do
+      set +e
+      wait "${client_pids[$index]}"
+      rc=$?
+      set -e
+      echo "===== client rail $index rc=$rc ====="
+      cat "/tmp/client-rail-${index}.log"
+      if [ "$rc" -ne 0 ]; then
+        failed=1
+      fi
+    done
+
+    result_count=$(awk '$1 == 65536 { count++ } END { print count + 0 }' /tmp/client-rail-*.log)
+    bandwidth_summary=$(awk '
+      $1 == 65536 {
+        if (count == 0 || $4 < min) min = $4
+        if (count == 0 || $4 > max) max = $4
+        sum += $4
+        count++
+      }
+      END {
+        printf "rails=%d min=%.2f max=%.2f aggregate=%.2f Gbit/sec", count, min, max, sum
+      }
+    ' /tmp/client-rail-*.log)
+    echo "Client bandwidth summary: $bandwidth_summary"
+    if [ "$result_count" -ne "$rail_count" ]; then
+      echo "ERROR: expected $rail_count bandwidth rows, found $result_count" >&2
+      failed=1
+    fi
+
+    echo "Waiting for the server pod to finish..."
+    server_phase=
+    for attempt in $(seq 1 240); do
+      server_json=$(curl -fsS --cacert "$ca" -H "$auth_header" "$server_url" 2>/dev/null || true)
+      server_phase=$(python3 -c \
+        'import json,sys; d=json.load(sys.stdin); print(d.get("status",{}).get("phase",""))' \
+        <<<"$server_json" 2>/dev/null || true)
+      if [ "$server_phase" = "Succeeded" ] || [ "$server_phase" = "Failed" ]; then
+        break
+      fi
+      sleep 1
+    done
+
+    echo "Server summary:"
+    curl -fsS --cacert "$ca" -H "$auth_header" "${server_url}/log" \
+      | grep -E '^(Server rail|Published all|===== server rail|Server completed|FAIL:|[[:space:]]*65536)' \
+      || true
+
+    if [ "$server_phase" != "Succeeded" ]; then
+      echo "ERROR: server phase is ${server_phase:-unknown}" >&2
+      failed=1
+    fi
+    if [ "$failed" -ne 0 ]; then
+      echo "FAIL: one or more of the $rail_count VF pairs failed ib_write_bw" >&2
+      exit 1
+    fi
+
+    echo "PASS: ib_write_bw completed concurrently across all $rail_count isolated VF pairs"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rdma-vf-write-bw-client
+  labels:
+    app: rdma-vf-write-bw-automated
+    rdma-vf-write-bw-role: client
+  annotations:
+    k8s.v1.cni.cncf.io/networks: rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf
+spec:
+  serviceAccountName: rdma-vf-write-bw-automated
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                  - BM.GPU.B4.8
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: rdma-vf-write-bw-automated
+          topologyKey: kubernetes.io/hostname
+  volumes:
+    - name: devinf
+      hostPath:
+        path: /dev/infiniband
+    - name: scripts
+      configMap:
+        name: rdma-vf-write-bw-automated
+        defaultMode: 0555
+  containers:
+    - name: client
+      image: oguzpastirmaci/mofed-perftest:5.4-3.6.8.1-ubuntu20.04-amd64
+      command: ["/scripts/client.sh"]
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["IPC_LOCK"]
+      volumeMounts:
+        - name: devinf
+          mountPath: /dev/infiniband
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+      resources:
+        requests:
+          cpu: "8"
+          memory: 2Gi
+        limits:
+          nvidia.com/rdma-vf: 16
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rdma-vf-write-bw-server
+  labels:
+    app: rdma-vf-write-bw-automated
+    rdma-vf-write-bw-role: server
+  annotations:
+    k8s.v1.cni.cncf.io/networks: rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf,rdma-vf
+spec:
+  serviceAccountName: rdma-vf-write-bw-automated
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                  - BM.GPU.B4.8
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: rdma-vf-write-bw-automated
+          topologyKey: kubernetes.io/hostname
+  volumes:
+    - name: devinf
+      hostPath:
+        path: /dev/infiniband
+    - name: scripts
+      configMap:
+        name: rdma-vf-write-bw-automated
+        defaultMode: 0555
+  containers:
+    - name: server
+      image: oguzpastirmaci/mofed-perftest:5.4-3.6.8.1-ubuntu20.04-amd64
+      command: ["/scripts/server.sh"]
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["IPC_LOCK"]
+      volumeMounts:
+        - name: devinf
+          mountPath: /dev/infiniband
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+      resources:
+        requests:
+          cpu: "8"
+          memory: 2Gi
+        limits:
+          nvidia.com/rdma-vf: 16

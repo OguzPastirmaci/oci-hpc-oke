@@ -176,9 +176,74 @@ kubectl get mpijob,pods -w
 kubectl logs -f job/nccl-test-launcher
 ```
 
-For a stable point-to-point test independent of MPIJob cleanup, deploy the two
-single-VF ping-pong pods. Required pod anti-affinity places them on different
-B4 nodes:
+For a self-running point-to-point test, use the automated manifest. It places
+the client and server on different B4 nodes, discovers their NV-IPAM addresses
+and VF-associated mlx5 devices, verifies that each pod sees exactly one RDMA
+link, checks the client route, runs `ibv_rc_pingpong`, and includes both client
+and server output in the client log:
+
+```bash
+kubectl apply -f manifests/nvidia-network-operator/standalone/ibv-rc-pingpong-automated.yaml
+kubectl wait \
+  --for=jsonpath='{.status.phase}'=Succeeded \
+  pod/rdma-vf-ping-auto-a \
+  --timeout=10m
+kubectl logs pod/rdma-vf-ping-auto-a
+```
+
+The last line must be:
+
+```text
+PASS: ibv_rc_pingpong completed over isolated VFs without a manual route
+```
+
+The automated test uses a namespace-scoped ServiceAccount and Role. The Role
+can only get and patch the named server pod and read that pod's log. The
+server publishes its dynamically allocated VF IP as a temporary annotation on
+its own pod; the client reads it directly through the Kubernetes API. It does
+not grant `pods/exec`, use a launcher image, or require hard-coded VF
+addresses. Delete the bundle before rerunning it because the endpoint pods
+have fixed names:
+
+```bash
+kubectl delete -f manifests/nvidia-network-operator/standalone/ibv-rc-pingpong-automated.yaml
+```
+
+To exercise every VF concurrently, apply the automated `ib_write_bw` bundle.
+Each endpoint requests all 16 `nvidia.com/rdma-vf` resources. The test maps
+`net1` through `net16` to their RDMA devices, pairs matching interfaces across
+the nodes, verifies each source-specific SBR route, and starts 16 concurrent
+tests on ports 18515 through 18530:
+
+```bash
+kubectl apply -f manifests/nvidia-network-operator/standalone/ib-write-bw-all-vfs-automated.yaml
+kubectl wait \
+  --for=jsonpath='{.status.phase}'=Succeeded \
+  pod/rdma-vf-write-bw-client \
+  --timeout=10m
+kubectl logs pod/rdma-vf-write-bw-client
+```
+
+The test uses the repo's established
+`oguzpastirmaci/mofed-perftest:5.4-3.6.8.1-ubuntu20.04-amd64` image because the
+CUDA 13.1 NCCL image used by the MPIJob contains `ibv_rc_pingpong` but does not
+contain an `ib_write_bw` binary or installed `perftest` package. Each rail runs
+for ten seconds with GID index 3, RDMA CM, traffic class 41, four QPs, and a
+64-KiB message size. A passing log ends with a bandwidth summary followed by:
+
+```text
+PASS: ib_write_bw completed concurrently across all 16 isolated VF pairs
+```
+
+Remove the fixed-name resources before another run:
+
+```bash
+kubectl delete -f manifests/nvidia-network-operator/standalone/ib-write-bw-all-vfs-automated.yaml
+```
+
+For manual diagnostics, the original manifest remains available unchanged. It
+deploys two long-running single-VF pods, and required pod anti-affinity places
+them on different B4 nodes:
 
 ```bash
 kubectl apply -f manifests/nvidia-network-operator/standalone/ibv-rc-pingpong.yaml
@@ -532,6 +597,40 @@ zero wrong or out-of-bounds values:
 
 Average bus bandwidth was 188.84 GB/s. The launcher initially appeared
 Pending only while pulling the 5.2 GB test image; it then ran and exited zero.
+
+### Automated diagnostic manifest results
+
+The separate `ibv-rc-pingpong-automated.yaml` bundle was applied after the
+targeted-manifest validation. It discovered dynamic NV-IPAM addresses and
+mlx5 devices without manual `kubectl exec`, confirmed one RDMA link per pod,
+printed the direct `net1` source route, and included both server and client
+results in the client log. Both pods exited zero and the final line was PASS:
+
+```text
+client: 6087.88 Mbit/sec, 10.77 usec/iter
+server: 5751.29 Mbit/sec, 11.40 usec/iter
+```
+
+The original long-running `ibv-rc-pingpong.yaml` was not changed. The new
+automated bundle has its own resource names and narrowly scoped RBAC. Its
+ServiceAccount cannot list pods, access the client pod through the API, or use
+`pods/exec`; it can only get/patch the named server pod and read its log.
+
+The separate `ib-write-bw-all-vfs-automated.yaml` bundle then allocated 16 VFs
+to each endpoint and ran all 16 matching VF pairs concurrently. Every
+secondary attachment was present, all client source lookups selected the
+matching interface and SBR table (`net1`/table 100 through `net16`/table 115),
+and all 32 client/server perftest processes exited zero. A repeat run of the
+final manifest reported:
+
+```text
+Client bandwidth summary: rails=16 min=6.12 max=6.15 aggregate=98.00 Gbit/sec
+PASS: ib_write_bw completed concurrently across all 16 isolated VF pairs
+```
+
+Both all-VF endpoint pods reached `Succeeded`. The same limited annotation and
+pod-log RBAC pattern was used; there was no `pods/exec` permission and no
+manual route addition.
 
 The ping-pong pods, primary-network baseline pod, MPIJob, LocalQueue,
 ClusterQueue, and test ResourceFlavor were removed. The Network Operator and
