@@ -1,0 +1,23 @@
+apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+spec:
+  # The host already has the required OFED/DOCA driver and GPU Operator. Do not
+  # configure ofedDriver, rdmaSharedDevicePlugin, or any GPU components here.
+  nvIpam:
+    image: nvidia-k8s-ipam
+    repository: nvcr.io/nvidia/mellanox
+    version: network-operator-v26.4.0
+    enableWebhook: false
+  secondaryNetwork:
+    # Installs tuning and sbr. Only those two binaries are invoked by the
+    # SriovNetwork metaPlugins chain.
+    cniPlugins:
+      image: plugins
+      repository: nvcr.io/nvidia/mellanox
+      version: network-operator-v26.4.0
+    multus:
+      image: multus-cni
+      repository: nvcr.io/nvidia/mellanox
+      version: network-operator-v26.4.0
