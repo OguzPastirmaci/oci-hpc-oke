@@ -111,6 +111,27 @@ kubectl apply -f manifests/nvidia-network-operator/standalone/sriov-network-pool
 kubectl apply -f manifests/nvidia-network-operator/standalone/sriov-network.yaml
 ```
 
+For a more targeted sysctl scope, apply
+`sriov-network-targeted-sysctls.yaml` instead of `sriov-network.yaml`. Both
+files define the same `rdma-vf` resource and are alternatives, not two
+resources to install together:
+
+```bash
+kubectl apply -f manifests/nvidia-network-operator/standalone/sriov-network-targeted-sysctls.yaml
+```
+
+The targeted variant applies the ARP and `accept_local` settings only to the
+VF represented by `IFNAME`, which Tuning CNI replaces with `net1`, `net2`, and
+so on. It retains both `all.rp_filter=0` and `IFNAME.rp_filter=0` because Linux
+uses the maximum of the global and interface values when performing reverse
+path validation; setting only the interface value cannot override a nonzero
+global value. This variant avoids applying the positive ARP and `accept_local`
+values to the pod's primary `eth0` interface.
+
+The 2026-06-27 validation record below used the fully namespace-wide
+`sriov-network.yaml`. The targeted variant requires the same route, sysctl,
+ping-pong, and NCCL checks before production use.
+
 Finally, let the SR-IOV Network Operator create the VFs. This is the only VF
 creation step:
 
