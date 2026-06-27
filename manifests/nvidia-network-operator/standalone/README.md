@@ -134,9 +134,10 @@ intentional for testing; record the PF-reported VF spoof-check state before and
 during allocation. The fully validated `sriov-network.yaml` explicitly used
 `spoofChk: "off"`.
 
-The 2026-06-27 validation record below used the fully namespace-wide
-`sriov-network.yaml`. The targeted variant requires the same route, sysctl,
-ping-pong, and NCCL checks before production use.
+The first 2026-06-27 validation record below used the fully namespace-wide
+`sriov-network.yaml`. A second 2026-06-27 record documents a separate cluster
+validation that used only `sriov-network-targeted-sysctls.yaml`, including
+baseline comparison, route, spoof-check, ping-pong, and NCCL checks.
 
 Finally, let the SR-IOV Network Operator create the VFs. This is the only VF
 creation step:
@@ -385,6 +386,159 @@ ClusterQueue, and test ResourceFlavor were deleted. The Network Operator Helm
 release and managed VF configuration were intentionally left installed. Both
 B4 nodes remained Ready and uncordoned with unchanged boot IDs, node states
 `Succeeded`, and 16 capacity/16 allocatable `nvidia.com/rdma-vf` resources.
+
+## Validation record: 2026-06-27 targeted-sysctls test cluster
+
+This was a separate OKE Kubernetes 1.35.2 cluster with two `BM.GPU.B4.8`
+nodes. This run applied only
+`sriov-network-targeted-sysctls.yaml`; it did not apply or transition through
+the namespace-wide `sriov-network.yaml` configuration.
+
+### OCA and PF gate
+
+The Oracle Cloud Agent HPC configuration was checked before installing the
+Network Operator. Both nodes had exactly one completion marker and no log
+lines matching error, fatal, failed, failure, or traceback:
+
+| Node | OCA completion marker | Error matches |
+|---|---|---:|
+| `10.140.77.117` | `Fully Configuredoci-hpc-mlx-configure1.0.0` at 19:00:01 UTC | 0 |
+| `10.140.79.236` | `Fully Configuredoci-hpc-mlx-configure1.0.0` at 18:59:58 UTC | 0 |
+
+On each node, all 16 selected PFs were `15b3:1019`, bound to `mlx5_core`, UP,
+MTU 4220, and paired with an active mlx5 RDMA device. Every PF exposed
+`sriov_totalvfs=127` and began with `sriov_numvfs=0`. The live
+`ib_core.netns_mode` value was exclusive (`N`, corresponding to
+`netns_mode=0`), and `/etc/modprobe.d/ib_core.conf` contained
+`options ib_core netns_mode=0`.
+
+### Targeted network and operator ownership
+
+The standalone Network Operator 26.4.0 Helm release was installed with NFD
+disabled because the GPU Operator already owned the single cluster NFD
+deployment. Before creating a node policy, the safety settings were:
+
+```text
+configurationMode: daemon
+disableDrain: false
+disablePlugins: [mellanox]
+node policies: none
+```
+
+The minimal `NicClusterPolicy` reached `ready`. Only Multus, container CNI
+plugins, and NV-IPAM were enabled; OFED, the shared RDMA device plugin, NIC
+Configuration Operator, and other optional components remained ignored. No
+`vf-config` resource or privileged VF-creation init container was used.
+
+The generated `default/rdma-vf` NAD contained this chain:
+
+```text
+sriov -> nv-ipam -> tuning(targeted sysctls) -> rdma -> sbr(addSourceHints=true)
+```
+
+Its tuning configuration contained only:
+
+```text
+net.ipv4.conf.all.rp_filter=0
+net.ipv4.conf.IFNAME.arp_announce=2
+net.ipv4.conf.IFNAME.arp_filter=1
+net.ipv4.conf.IFNAME.arp_ignore=1
+net.ipv4.conf.IFNAME.rp_filter=0
+net.ipv4.conf.IFNAME.accept_local=1
+```
+
+The generated NAD had zero `spoofchk` occurrences. Therefore this test did not
+ask SR-IOV CNI to change spoof checking.
+
+### VF creation without drain or reboot
+
+The generic SR-IOV plugin changed every selected PF from zero to one runtime
+VF. Config-daemon logs reported `no need drain` for all 16 addresses on both
+nodes and aggregated `drain-required=false, reboot-required=false`. Both node
+states reached `Succeeded` with an empty `lastSyncError`.
+
+| Node | Boot ID before and after | Final PFs at `numVfs=1` | Allocatable VFs |
+|---|---|---:|---:|
+| `10.140.77.117` | `3d5f3d39-bdc6-4908-a268-29cc0badf265` (unchanged) | 16/16 | 16 |
+| `10.140.79.236` | `2c9f3840-8579-44da-9258-a49390f978a2` (unchanged) | 16/16 | 16 |
+
+The nodes remained Ready and schedulable. Firmware capacity stayed 127; only
+the runtime VF count changed.
+
+### Targeted sysctl comparison
+
+A primary-network-only pod using the same image established the OCI CNI
+baseline. A one-VF pod then showed the targeted values below:
+
+| Scope | Primary-only baseline | With targeted `rdma-vf` |
+|---|---|---|
+| `all` ARP announce/filter/ignore | `0/0/0` | `0/0/0` |
+| `all.rp_filter` | `0` | `0` |
+| `all.accept_local` | `1` | `1` |
+| `eth0` ARP announce/filter/ignore | `0/0/0` | `0/0/0` |
+| `eth0.rp_filter` / `accept_local` | `0/0` | `0/0` |
+| `net1` ARP announce/filter/ignore | not present | `2/1/1` |
+| `net1.rp_filter` / `accept_local` | not present | `0/1` |
+
+This proves that the positive ARP and `accept_local` values were not copied to
+`all` or `eth0`. The observed global `accept_local=1` came from the OCI primary
+network baseline, not from the targeted NAD. The global `rp_filter=0` was both
+the baseline value and an explicit targeted-manifest requirement.
+
+Each ping-pong pod saw exactly one active RDMA link, proving RDMA CNI namespace
+isolation. SBR source hints installed the VF subnet in the main table with the
+VF source address. No manual route was added:
+
+```text
+pod A: 192.168.0.101 dev net1 src 192.168.0.201
+pod B: 192.168.0.201 dev net1 src 192.168.0.101
+```
+
+ICMP had zero loss. `ibv_rc_pingpong -g 3` completed 1,000 iterations:
+
+```text
+client: 6201.95 Mbit/sec, 10.57 usec/iter
+server: 5943.23 Mbit/sec, 11.03 usec/iter
+```
+
+The initial server/client automation attempt was invalid because the
+background server retained the `kubectl exec` stream until its timeout, so the
+client started only after the server exited. Running server and client in
+separate concurrent exec sessions produced the successful result above.
+
+### Omitted spoofChk result
+
+A representative VF reported `spoof checking off` immediately after VF
+creation and before allocation. The two VFs selected by the ping-pong pods
+remained off while attached. After all tests, every one of the 16 VFs on both
+nodes reported `spoof checking off`.
+
+Omitting `spoofChk` therefore worked on this cluster and did not toggle the
+existing/default state. It does not enforce a portable desired state: a host
+whose VF starts with spoof checking on would retain that state. Keep the field
+omitted only when preserving host/default behavior is intentional.
+
+### Targeted-manifest NCCL result
+
+The unmodified `BM.GPU.B4.8.yaml` Kueue MPIJob allocated all 16 VFs and all
+eight GPUs on each node, ran 16 ranks, and reached `Succeeded`. It reported
+zero wrong or out-of-bounds values:
+
+| Size | Out-of-place bus bandwidth | In-place bus bandwidth |
+|---:|---:|---:|
+| 1 GiB | 187.43 GB/s | 187.15 GB/s |
+| 2 GiB | 188.96 GB/s | 189.07 GB/s |
+| 4 GiB | 190.21 GB/s | 190.21 GB/s |
+
+Average bus bandwidth was 188.84 GB/s. The launcher initially appeared
+Pending only while pulling the 5.2 GB test image; it then ran and exited zero.
+
+The ping-pong pods, primary-network baseline pod, MPIJob, LocalQueue,
+ClusterQueue, and test ResourceFlavor were removed. The Network Operator and
+managed VF configuration were intentionally left installed. All Network
+Operator pods were Running with zero restarts; both node states remained
+`Succeeded`, both boot IDs were unchanged, all 32 PFs remained at
+`sriov_numvfs=1`, and both nodes retained 16 allocatable VFs.
 
 ## Rollback
 
