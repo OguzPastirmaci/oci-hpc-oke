@@ -5,6 +5,17 @@ metadata:
 spec:
   # The host already has the required OFED/DOCA driver and GPU Operator. Do not
   # configure ofedDriver, rdmaSharedDevicePlugin, or any GPU components here.
+
+  # The operator injects only an nvidia.com/gpu toleration by default, so the
+  # Multus, CNI plugin, and nv-ipam DaemonSets never land on AMD GPU nodes. With
+  # no Multus on the node the pod network annotation is ignored without error.
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+    - key: amd.com/gpu
+      operator: Exists
+      effect: NoSchedule
   nvIpam:
     image: nvidia-k8s-ipam
     repository: nvcr.io/nvidia/mellanox
