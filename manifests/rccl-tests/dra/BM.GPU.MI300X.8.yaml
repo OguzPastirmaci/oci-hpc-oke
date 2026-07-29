@@ -13,7 +13,7 @@ spec:
           count: 8
           selectors:
           - cel:
-              expression: device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/sriov-rdma-vf"
+              expression: device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rdma-vf"
 ---
 apiVersion: kubeflow.org/v2beta1
 kind: MPIJob

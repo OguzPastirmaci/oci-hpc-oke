@@ -146,6 +146,106 @@ creation step:
 kubectl apply -f manifests/nvidia-network-operator/standalone/sriov-network-node-policy.yaml
 ```
 
+## Dynamic Resource Allocation (DRA) variant
+
+The steps above hand VFs to pods through the SR-IOV device plugin, which advertises
+`nvidia.com/rdma-vf` as an extended resource. The SR-IOV Network Operator can instead
+publish VFs through DRA, where pods claim devices with a `ResourceClaimTemplate`. The
+two are alternatives; pick one before installing.
+
+Install with `values-dra.yaml` instead of `values.yaml`. It is the same file plus the
+`dynamicResourceAllocation` feature gate:
+
+```bash
+helm upgrade --install network-operator nvidia/network-operator \
+  --namespace nvidia-network-operator \
+  --create-namespace \
+  --version 26.4.0 \
+  --values manifests/nvidia-network-operator/standalone/values-dra.yaml \
+  --wait \
+  --timeout 15m
+```
+
+Confirm the gate reached the operator config:
+
+```bash
+kubectl -n nvidia-network-operator get sriovoperatorconfig default \
+  -o jsonpath='{.spec.featureGates.dynamicResourceAllocation}{"\n"}'
+```
+
+Everything else in the install is unchanged: the same `NicClusterPolicy`, IPAM pool,
+pool config, and `SriovNetwork`. Apply the node policy for the shape you are running.
+`sriov-network-node-policy.yaml` covers `BM.GPU.B4.8`;
+`sriov-network-node-policy-mi300x.yaml` covers `BM.GPU.MI300X.8`, which has 8 PFs
+rather than 16.
+
+### Verifying VFs under DRA
+
+The allocatable-resource check in the next section does **not** apply. With the
+feature gate on, the device plugin no longer advertises `nvidia.com/rdma-vf`, so
+`.status.allocatable` has no VF entry and that command prints `<none>`. VFs appear as
+ResourceSlices instead:
+
+```bash
+kubectl get resourceslices
+```
+
+Expect one slice per node, each holding one device per PF. The operator also
+generates a `DeviceClass` named after the policy's `resourceName`, selecting on
+`nvidia.com/<resourceName>`:
+
+```bash
+kubectl get deviceclass rdma-vf -o yaml
+```
+
+A `resourceName` mismatch between the node policy and the `SriovNetwork` is silent
+until a pod starts, and then surfaces as `SRIOV-CNI failed to load netconf:
+LoadConf(): VF pci addr is required`. Multus resolves the VF's PCI address by matching
+the NAD's `k8s.v1.cni.cncf.io/resourceName` annotation against the claim's allocated
+devices, so the two names must agree.
+
+### Claiming VFs from a workload
+
+Pods do not request `nvidia.com/rdma-vf` under DRA. They reference a
+`ResourceClaimTemplate`, and one claim can carry every VF on the node:
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: rccl-sriov-vf-8
+spec:
+  spec:
+    devices:
+      requests:
+      - name: vf
+        exactly:
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
+          count: 8
+          selectors:
+          - cel:
+              expression: device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rdma-vf"
+```
+
+The pod keeps the usual Multus annotation, repeated once per VF, and adds
+`resourceClaims` plus `resources.claims`. Each repeated attachment consumes a distinct
+device from the claim, so eight entries yield eight VFs, one per PF, surfacing as
+`net1` through `net8`.
+
+`manifests/rccl-tests/dra/BM.GPU.MI300X.8.yaml` is a complete example. It allocates
+all 8 VFs through DRA while GPUs still come from the AMD device plugin, and it drops
+Kueue.
+
+### AMD GPU nodes
+
+The operator injects only an `nvidia.com/gpu` toleration into the Multus, CNI plugin,
+and NV-IPAM DaemonSets. On AMD nodes tainted `amd.com/gpu`, those DaemonSets skip the
+very nodes holding the VFs. The failure is quiet: the DaemonSets report healthy
+because they run everywhere else, and pods reach `Running` with their network
+annotation ignored and no secondary interface. `nic-cluster-policy.yaml` sets
+`spec.tolerations` for both taint keys to prevent this. Workload pods need the
+`amd.com/gpu` toleration too.
+
 ## Verify VF creation without reboot
 
 Watch node state until both B4 nodes report `Succeeded`; fail the test if a

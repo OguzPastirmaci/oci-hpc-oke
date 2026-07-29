@@ -12,3 +12,4 @@ spec:
         operator: In
         values:
           - BM.GPU.B4.8
+          - BM.GPU.MI300X.8
