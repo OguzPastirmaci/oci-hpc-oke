@@ -739,6 +739,161 @@ Operator pods were Running with zero restarts; both node states remained
 `Succeeded`, both boot IDs were unchanged, all 32 PFs remained at
 `sriov_numvfs=1`, and both nodes retained 16 allocatable VFs.
 
+## Validation record: 2026-07-28 MI300X DRA test cluster
+
+This run validated the DRA variant on an OKE Kubernetes 1.35.2 cluster with two
+`BM.GPU.MI300X.8` nodes (`10.140.76.70`, `10.140.78.175`) and three operational
+nodes, running Ubuntu 24.04.4, kernel `6.8.0-1057-oracle`, and CRI-O 1.35.2. The
+AMD GPU device plugin was already installed and each GPU node advertised
+`amd.com/gpu: 8`.
+
+Unlike the two B4.8 records above, this was a teardown-and-reinstall: the cluster
+already had a working but hand-patched configuration, which was fully removed
+before reinstalling from these manifests only. The point was to prove the files
+reproduce a working setup without manual intervention.
+
+### Teardown
+
+Rollback followed the procedure in the next section. The node policy was patched to
+`numVfs: 0` first; both node states returned to `Succeeded` and all ResourceSlices
+disappeared. All 8 PFs on each node reported `sriov_numvfs=0`. The SriovNetwork,
+IPPool, pool config, node policy, and NicClusterPolicy were then deleted and the
+Helm release uninstalled. Afterwards the `nvidia-network-operator` namespace had no
+pods, no NetworkAttachmentDefinition remained, and both nodes stayed Ready and
+uncordoned.
+
+### Install and ownership proof
+
+The 26.4.0 chart was installed with `values-dra.yaml` as revision 1. Before any node
+policy existed, `SriovOperatorConfig/default` reported:
+
+```text
+configurationMode: daemon
+disableDrain: false
+disablePlugins: [mellanox]
+featureGates.dynamicResourceAllocation: true
+```
+
+Only the GPU Operator's NFD deployment was present; the Network Operator did not
+install a second one. The minimal `NicClusterPolicy` reached `ready` with Multus,
+container-networking plugins, and NV-IPAM `ready`, and OFED, both device plugins,
+NIC feature discovery, NIC Configuration Operator, DTS, and Spectrum-X `ignore`.
+
+The `sriov-dra-driver` DaemonSet sits at `Init:0/1` until a node policy exists. Its
+`wait-for-config` init container annotates its own pod with
+`sriovnetwork.openshift.io/device-plugin-wait-config` and waits for the config daemon
+to clear it. This is expected between the NicClusterPolicy and node policy steps, not
+a failure. It reached 2/2 immediately after the node policy was applied.
+
+### DaemonSet placement on AMD nodes
+
+This is the regression check for the `amd.com/gpu` toleration in
+`nic-cluster-policy.yaml`. On a clean install all three DaemonSets covered every node:
+
+| DaemonSet | Desired | Ready |
+|---|---:|---:|
+| `kube-multus-ds` | 5 | 5 |
+| `cni-plugins-ds` | 5 | 5 |
+| `nv-ipam-node` | 5 | 5 |
+
+Without the toleration these report 3/3 and are absent from the two GPU nodes, which
+looks healthy but leaves pods on those nodes with no Multus and therefore no
+secondary interface.
+
+### VF creation without reboot
+
+Both node states reached `Succeeded` with an empty `lastSyncError`. No
+`Reboot_Required` state appeared.
+
+| Node | Boot ID before and after | PFs at `numVfs=1` | ResourceSlice devices |
+|---|---|---:|---:|
+| `10.140.76.70` | `4fd5f539-1688-4d1a-b277-7bdee144ab70` (unchanged) | 8/8 | 8 |
+| `10.140.78.175` | `d81d415d-cb13-4379-8778-624672754d3c` (unchanged) | 8/8 | 8 |
+
+Every selected PF reported `sriov_totalvfs=127` and MTU 4220 while `sriov_numvfs`
+changed from 0 to 1. Firmware capacity was unchanged; only the runtime VF count moved.
+Both nodes stayed Ready and uncordoned.
+
+### DRA object verification
+
+Each node published one ResourceSlice holding 8 devices, one per PF `rdma0` through
+`rdma7`, all carrying `k8s.cni.cncf.io/resourceName: nvidia.com/rdma-vf`. Node
+allocatable contained no VF resource, as expected with the feature gate on.
+
+The operator generated `DeviceClass/rdma-vf`:
+
+```text
+device.driver == "sriovnetwork.k8snetworkplumbingwg.io" &&
+  device.attributes["k8s.cni.cncf.io"].resourceName == "nvidia.com/rdma-vf"
+```
+
+The generated `default/rdma-vf` NAD carried
+`k8s.v1.cni.cncf.io/resourceName: nvidia.com/rdma-vf` and this chain, with NV-IPAM
+configured as the SR-IOV plugin's IPAM against pool `sriov-pool`:
+
+```text
+sriov -> nv-ipam -> tuning(targeted sysctls) -> rdma -> sbr(addSourceHints=true)
+```
+
+A pod requesting a `count: 8` claim plus eight repeated `rdma-vf` attachments received
+eight distinct VFs, one per PF, visible as `mlx5_10` through `mlx5_17` and `net1`
+through `net8`. Each repeated attachment consumed a different device from the claim.
+
+### resourceName mismatch
+
+This run caught a defect in the first version of
+`manifests/rccl-tests/dra/BM.GPU.MI300X.8.yaml`, which selected
+`nvidia.com/sriov-rdma-vf`. That name came from a hand-applied node policy on the
+original cluster, not from this repository. A clean deploy produces
+`nvidia.com/rdma-vf`.
+
+The mismatch is silent until a pod starts. Scheduling succeeds and the claim is
+allocated, then the sandbox fails repeatedly with:
+
+```text
+SRIOV-CNI failed to load netconf: LoadConf(): VF pci addr is required
+```
+
+Multus resolves the VF PCI address by matching the NAD's
+`k8s.v1.cni.cncf.io/resourceName` annotation against the claim's allocated devices, so
+`SriovNetwork.spec.resourceName` and `SriovNetworkNodePolicy.spec.resourceName` must
+agree. Correcting the selector resolved it.
+
+### RCCL result
+
+`manifests/rccl-tests/dra/BM.GPU.MI300X.8.yaml` allocated all 8 VFs through DRA and
+all 8 GPUs through the AMD device plugin on each node, ran 16 ranks, and reached
+`Succeeded` with zero wrong and zero out-of-bounds values:
+
+| Size | Out-of-place bus bandwidth | In-place bus bandwidth |
+|---:|---:|---:|
+| 1 GiB | 351.11 GB/s | 350.92 GB/s |
+| 2 GiB | 353.58 GB/s | 353.56 GB/s |
+| 4 GiB | 355.30 GB/s | 355.39 GB/s |
+| 8 GiB | 356.79 GB/s | 356.67 GB/s |
+| 16 GiB | 359.70 GB/s | 359.78 GB/s |
+
+The launcher ran on an operational node and needed no toleration. Worker pods required
+the `amd.com/gpu` toleration, which the reference manifests for untainted clusters do
+not carry.
+
+Workers logged `NCCL WARN Missing "iommu=pt" from kernel command line`. It did not
+prevent the run, but it is a node image concern worth tracking separately.
+
+After the test the Network Operator and managed VF configuration were intentionally
+left installed. All Network Operator pods were Running with zero restarts, both node
+states remained `Succeeded`, both boot IDs were unchanged, all 16 PFs across the two
+nodes stayed at `sriov_numvfs=1`, and both ResourceSlices remained published.
+
+### Not covered by this run
+
+`ibv-rc-pingpong-automated.yaml` and `ib-write-bw-all-vfs-automated.yaml` were not
+run. Both request `nvidia.com/rdma-vf` as an extended resource, which does not exist
+under DRA, and both assume 16 VFs. They need DRA claims and an 8-VF variant before
+they can run on MI300X. Consequently this record contains no per-rail SBR route
+check, sysctl comparison, or spoof-check observation; the RCCL result is the only
+functional evidence.
+
 ## Rollback
 
 To return the PFs to zero VFs under the same owner, first change `numVfs` to
