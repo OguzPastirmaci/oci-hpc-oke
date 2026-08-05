@@ -15,11 +15,9 @@ images because its `plugins` image contains the SBR `addSourceHints` option.
 The `26.1.1` plugins image contains CNI plugins v1.9.1 but its SBR binary does
 not contain that option.
 
-As of 2026-06-27, NVIDIA's Helm repository and documentation publish `26.4.0`
+As of 2026-06-27, NVIDIA's Helm repository and documentation publish `26.4.1`
 and the platform-support documentation calls 26.4.x supported. However, the
-public `Mellanox/network-operator` GitHub releases page still exposes only
-`v26.4.0-rc.1` as a pre-release. This deployment intentionally accepts that
-release-status inconsistency to obtain `addSourceHints`.
+public `Mellanox/network-operator`.
 
 ## Ownership boundaries
 
