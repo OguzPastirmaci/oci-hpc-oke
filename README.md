@@ -87,7 +87,7 @@ Install the standalone Network Operator with its NFD deployment disabled. Versio
 helm upgrade --install network-operator nvidia/network-operator \
   --namespace nvidia-network-operator \
   --create-namespace \
-  --version 26.4.0 \
+  --version 26.4.1 \
   --values manifests/nvidia-network-operator/standalone/values.yaml \
   --wait \
   --timeout 15m
