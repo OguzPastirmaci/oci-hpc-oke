@@ -489,6 +489,50 @@ resource "null_resource" "slinky_home_pvc_via_operator" {
     ]
   }
 
+  lifecycle {
+    ignore_changes = [
+      triggers["bastion_host"],
+      triggers["bastion_user"],
+      triggers["ssh_private_key"],
+      triggers["operator_host"],
+      triggers["operator_user"],
+      triggers["slurm_namespace"],
+    ]
+  }
+
+  depends_on = [
+    module.oke,
+    null_resource.fss_pv_via_operator,
+    kubernetes_persistent_volume_v1.fss,
+  ]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+resource "terraform_data" "slinky_home_pvc_via_operator_cleanup" {
+  count = length(null_resource.slinky_home_pvc_via_operator)
+
+  triggers_replace = null_resource.slinky_home_pvc_via_operator[count.index].id
+
+  input = {
+    slurm_namespace = null_resource.slinky_home_pvc_via_operator[count.index].triggers.slurm_namespace
+    bastion_host    = module.oke.bastion_public_ip
+    bastion_user    = local.bastion_user
+    ssh_private_key = tls_private_key.stack_key.private_key_openssh
+    operator_host   = module.oke.operator_private_ip
+    operator_user   = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
   # Delete pods that still reference slurm-home before deleting the PVC. A
   # terminating pod can keep pvc-protection/pv-protection finalizers in place,
   # which blocks the FSS PV destroy until Terraform times out.
@@ -497,10 +541,10 @@ resource "null_resource" "slinky_home_pvc_via_operator" {
     inline = [
       <<-EOT
       set -e
-      export PATH=$PATH:/usr/local/bin:/home/${self.triggers.operator_user}/bin
+      export PATH=$PATH:/usr/local/bin:/home/${self.output.operator_user}/bin
       export OCI_CLI_AUTH=instance_principal
       export PYTHONWARNINGS="ignore:the 'strict' parameter::urllib3.poolmanager"
-      export NS="${self.triggers.slurm_namespace}"
+      export NS="${self.output.slurm_namespace}"
       export CLAIM="slurm-home"
 
       for i in $(seq 1 30); do
@@ -568,22 +612,8 @@ print(" ".join(name for name in names if name))
     on_failure = continue
   }
 
-  lifecycle {
-    ignore_changes = [
-      triggers["bastion_host"],
-      triggers["bastion_user"],
-      triggers["ssh_private_key"],
-      triggers["operator_host"],
-      triggers["operator_user"],
-      triggers["slurm_namespace"],
-    ]
-  }
-
-  depends_on = [
-    module.oke,
-    null_resource.fss_pv_via_operator,
-    kubernetes_persistent_volume_v1.fss,
-  ]
+  # The PVC must go before the FSS PV.
+  depends_on = [terraform_data.fss_pv_via_operator_cleanup]
 }
 
 module "slinky_mariadb_operator_crds" {
@@ -706,16 +736,6 @@ resource "null_resource" "slinky_mariadb_via_operator" {
     ]
   }
 
-  provisioner "remote-exec" {
-    when = destroy
-    inline = [
-      "export PATH=$PATH:/usr/local/bin:/home/${self.triggers.operator_user}/bin",
-      "export OCI_CLI_AUTH=instance_principal",
-      "kubectl delete mariadb mariadb --namespace ${self.triggers.slurm_namespace} --ignore-not-found=true || true",
-    ]
-    on_failure = continue
-  }
-
   lifecycle {
     ignore_changes = [
       triggers["bastion_host"],
@@ -728,6 +748,43 @@ resource "null_resource" "slinky_mariadb_via_operator" {
   }
 
   depends_on = [module.slinky_mariadb_operator]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+resource "terraform_data" "slinky_mariadb_via_operator_cleanup" {
+  count = length(null_resource.slinky_mariadb_via_operator)
+
+  triggers_replace = null_resource.slinky_mariadb_via_operator[count.index].id
+
+  input = {
+    slurm_namespace = null_resource.slinky_mariadb_via_operator[count.index].triggers.slurm_namespace
+    bastion_host    = module.oke.bastion_public_ip
+    bastion_user    = local.bastion_user
+    ssh_private_key = tls_private_key.stack_key.private_key_openssh
+    operator_host   = module.oke.operator_private_ip
+    operator_user   = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
+  provisioner "remote-exec" {
+    when = destroy
+    inline = [
+      "export PATH=$PATH:/usr/local/bin:/home/${self.output.operator_user}/bin",
+      "export OCI_CLI_AUTH=instance_principal",
+      "kubectl delete mariadb mariadb --namespace ${self.output.slurm_namespace} --ignore-not-found=true || true",
+    ]
+    on_failure = continue
+  }
 }
 
 module "slinky_operator_crds" {
@@ -863,16 +920,6 @@ resource "null_resource" "slinky_gmc_compute_domains_via_operator" {
     ]
   }
 
-  provisioner "remote-exec" {
-    when       = destroy
-    on_failure = continue
-    inline = [
-      "export PATH=$PATH:/usr/local/bin:/home/${self.triggers.operator_user}/bin",
-      "export OCI_CLI_AUTH=instance_principal",
-      "kubectl delete -f ${self.triggers.workdir}/gmc-compute-domains.yaml --ignore-not-found=true || true",
-    ]
-  }
-
   lifecycle {
     ignore_changes = [
       triggers["bastion_host"],
@@ -890,6 +937,45 @@ resource "null_resource" "slinky_gmc_compute_domains_via_operator" {
     module.nvidia_dra_driver,
     helm_release.nvidia_dra_driver,
   ]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+# Delete by name, because the manifest file exists only on the operator that applied it.
+resource "terraform_data" "slinky_gmc_compute_domains_via_operator_cleanup" {
+  count = length(null_resource.slinky_gmc_compute_domains_via_operator)
+
+  triggers_replace = null_resource.slinky_gmc_compute_domains_via_operator[count.index].id
+
+  input = {
+    compute_domain_names = join(" ", values(local.slinky_gmc_compute_domains)[*].metadata.name)
+    slurm_namespace      = null_resource.slinky_gmc_compute_domains_via_operator[count.index].triggers.slurm_namespace
+    bastion_host         = module.oke.bastion_public_ip
+    bastion_user         = local.bastion_user
+    ssh_private_key      = tls_private_key.stack_key.private_key_openssh
+    operator_host        = module.oke.operator_private_ip
+    operator_user        = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
+  provisioner "remote-exec" {
+    when       = destroy
+    on_failure = continue
+    inline = [
+      "export PATH=$PATH:/usr/local/bin:/home/${self.output.operator_user}/bin",
+      "export OCI_CLI_AUTH=instance_principal",
+      "kubectl delete computedomains.resource.nvidia.com ${self.output.compute_domain_names} --namespace ${self.output.slurm_namespace} --ignore-not-found=true || true",
+    ]
+  }
 }
 
 module "slinky_slurm" {
@@ -960,5 +1046,10 @@ module "slinky_slurm" {
     null_resource.slinky_openldap_config_via_operator,
     null_resource.slinky_home_pvc_via_operator,
     null_resource.slinky_mariadb_via_operator,
+    # Run these cleanups only after the Slurm release is uninstalled.
+    terraform_data.nccl_rccl_configmap_cleanup,
+    terraform_data.slinky_gmc_compute_domains_via_operator_cleanup,
+    terraform_data.slinky_home_pvc_via_operator_cleanup,
+    terraform_data.slinky_mariadb_via_operator_cleanup,
   ]
 }

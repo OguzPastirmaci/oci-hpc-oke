@@ -48,17 +48,6 @@ resource "null_resource" "nccl_rccl_configmap" {
     ]
   }
 
-  provisioner "remote-exec" {
-    when = destroy
-    inline = [
-      "export PATH=$PATH:/usr/local/bin:/home/${self.triggers.operator_user}/bin",
-      "export OCI_CLI_AUTH=instance_principal",
-      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
-      "kubectl delete configmap ${self.triggers.configmap_name} --namespace ${self.triggers.namespace} --ignore-not-found"
-    ]
-    on_failure = continue
-  }
-
   lifecycle {
     ignore_changes = [
       triggers["bastion_host"],
@@ -70,4 +59,43 @@ resource "null_resource" "nccl_rccl_configmap" {
   }
 
   depends_on = [module.oke]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+resource "terraform_data" "nccl_rccl_configmap_cleanup" {
+  for_each = null_resource.nccl_rccl_configmap
+
+  triggers_replace = each.value.id
+
+  input = {
+    configmap_name  = each.value.triggers.configmap_name
+    namespace       = each.value.triggers.namespace
+    bastion_host    = module.oke.bastion_public_ip
+    bastion_user    = local.bastion_user
+    ssh_private_key = tls_private_key.stack_key.private_key_openssh
+    operator_host   = module.oke.operator_private_ip
+    operator_user   = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
+  provisioner "remote-exec" {
+    when = destroy
+    inline = [
+      "export PATH=$PATH:/usr/local/bin:/home/${self.output.operator_user}/bin",
+      "export OCI_CLI_AUTH=instance_principal",
+      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
+      "kubectl delete configmap ${self.output.configmap_name} --namespace ${self.output.namespace} --ignore-not-found"
+    ]
+    on_failure = continue
+  }
 }

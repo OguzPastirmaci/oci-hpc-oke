@@ -72,20 +72,6 @@ resource "null_resource" "nvidia_network_operator_manifests" {
     ]
   }
 
-  provisioner "remote-exec" {
-    when = destroy
-    inline = [
-      "export PATH=$PATH:/usr/local/bin:/home/${self.triggers.operator_user}/bin",
-      "export OCI_CLI_AUTH=instance_principal",
-      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
-      "kubectl delete sriovnetworks.sriovnetwork.openshift.io rdma-vf --namespace ${self.triggers.namespace} --ignore-not-found",
-      "kubectl delete sriovnetworkpoolconfigs.sriovnetwork.openshift.io rdma-vf --namespace ${self.triggers.namespace} --ignore-not-found",
-      "kubectl delete sriovnetworknodepolicies.sriovnetwork.openshift.io ${self.triggers.policy_names} --namespace ${self.triggers.namespace} --ignore-not-found",
-      "kubectl delete ippools.nv-ipam.nvidia.com sriov-pool --namespace ${self.triggers.namespace} --ignore-not-found"
-    ]
-    on_failure = continue
-  }
-
   lifecycle {
     ignore_changes = [
       triggers["bastion_host"],
@@ -100,4 +86,46 @@ resource "null_resource" "nvidia_network_operator_manifests" {
     module.oke,
     oci_containerengine_addon.nvidia_network_operator,
   ]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+resource "terraform_data" "nvidia_network_operator_manifests_cleanup" {
+  count = length(null_resource.nvidia_network_operator_manifests)
+
+  triggers_replace = null_resource.nvidia_network_operator_manifests[count.index].id
+
+  input = {
+    namespace       = null_resource.nvidia_network_operator_manifests[count.index].triggers.namespace
+    policy_names    = null_resource.nvidia_network_operator_manifests[count.index].triggers.policy_names
+    bastion_host    = module.oke.bastion_public_ip
+    bastion_user    = local.bastion_user
+    ssh_private_key = tls_private_key.stack_key.private_key_openssh
+    operator_host   = module.oke.operator_private_ip
+    operator_user   = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
+  provisioner "remote-exec" {
+    when = destroy
+    inline = [
+      "export PATH=$PATH:/usr/local/bin:/home/${self.output.operator_user}/bin",
+      "export OCI_CLI_AUTH=instance_principal",
+      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
+      "kubectl delete sriovnetworks.sriovnetwork.openshift.io rdma-vf --namespace ${self.output.namespace} --ignore-not-found",
+      "kubectl delete sriovnetworkpoolconfigs.sriovnetwork.openshift.io rdma-vf --namespace ${self.output.namespace} --ignore-not-found",
+      "kubectl delete sriovnetworknodepolicies.sriovnetwork.openshift.io ${self.output.policy_names} --namespace ${self.output.namespace} --ignore-not-found",
+      "kubectl delete ippools.nv-ipam.nvidia.com sriov-pool --namespace ${self.output.namespace} --ignore-not-found"
+    ]
+    on_failure = continue
+  }
 }

@@ -151,18 +151,6 @@ resource "null_resource" "deploy_grafana_dashboards_and_alerts_from_operator" {
     ]))
   }
 
-  provisioner "remote-exec" {
-    when = destroy
-    inline = [
-      "export PATH=$PATH:/home/${self.triggers.operator_user}/bin",
-      "export OCI_CLI_AUTH=instance_principal",
-      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
-      "cd /home/${self.triggers.operator_user}/grafana/",
-      "kubectl delete -k ."
-    ]
-    on_failure = continue
-  }
-
   lifecycle {
     ignore_changes = [
       triggers["bastion_host"],
@@ -174,4 +162,44 @@ resource "null_resource" "deploy_grafana_dashboards_and_alerts_from_operator" {
   }
 
   depends_on = [module.kube_prometheus_stack]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+# Delete by name, because the kustomization files exist only on the operator that applied them.
+resource "terraform_data" "deploy_grafana_dashboards_and_alerts_from_operator_cleanup" {
+  count = length(null_resource.deploy_grafana_dashboards_and_alerts_from_operator)
+
+  triggers_replace = null_resource.deploy_grafana_dashboards_and_alerts_from_operator[count.index].id
+
+  input = {
+    configmap_names = join(" ", local.kustomize_configmap_generator.configMapGenerator[*].name)
+    namespace       = null_resource.deploy_grafana_dashboards_and_alerts_from_operator[count.index].triggers.namespace
+    bastion_host    = module.oke.bastion_public_ip
+    bastion_user    = local.bastion_user
+    ssh_private_key = tls_private_key.stack_key.private_key_openssh
+    operator_host   = module.oke.operator_private_ip
+    operator_user   = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
+  provisioner "remote-exec" {
+    when = destroy
+    inline = [
+      "export PATH=$PATH:/home/${self.output.operator_user}/bin",
+      "export OCI_CLI_AUTH=instance_principal",
+      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
+      "kubectl delete configmap ${self.output.configmap_names} --namespace ${self.output.namespace} --ignore-not-found"
+    ]
+    on_failure = continue
+  }
 }

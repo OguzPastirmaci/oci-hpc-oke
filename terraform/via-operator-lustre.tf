@@ -37,17 +37,6 @@ resource "null_resource" "lustre_pv_via_operator" {
     ]
   }
 
-  provisioner "remote-exec" {
-    when = destroy
-    inline = [
-      "export PATH=$PATH:/usr/local/bin:/home/${self.triggers.operator_user}/bin",
-      "export OCI_CLI_AUTH=instance_principal",
-      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
-      "kubectl delete pv lustre-pv --ignore-not-found --wait=true --timeout=120s",
-    ]
-    on_failure = continue
-  }
-
   lifecycle {
     ignore_changes = [
       triggers["bastion_host"],
@@ -59,4 +48,41 @@ resource "null_resource" "lustre_pv_via_operator" {
   }
 
   depends_on = [module.oke, oci_lustre_file_storage_lustre_file_system.lustre]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+resource "terraform_data" "lustre_pv_via_operator_cleanup" {
+  count = length(null_resource.lustre_pv_via_operator)
+
+  triggers_replace = null_resource.lustre_pv_via_operator[count.index].id
+
+  input = {
+    bastion_host    = module.oke.bastion_public_ip
+    bastion_user    = local.bastion_user
+    ssh_private_key = tls_private_key.stack_key.private_key_openssh
+    operator_host   = module.oke.operator_private_ip
+    operator_user   = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
+  provisioner "remote-exec" {
+    when = destroy
+    inline = [
+      "export PATH=$PATH:/usr/local/bin:/home/${self.output.operator_user}/bin",
+      "export OCI_CLI_AUTH=instance_principal",
+      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
+      "kubectl delete pv lustre-pv --ignore-not-found --wait=true --timeout=120s",
+    ]
+    on_failure = continue
+  }
 }

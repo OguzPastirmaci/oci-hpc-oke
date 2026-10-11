@@ -447,16 +447,6 @@ resource "null_resource" "nvidia_dcgm_exporter_metrics_via_operator" {
     ]
   }
 
-  provisioner "remote-exec" {
-    when = destroy
-    inline = [
-      "export OCI_CLI_AUTH=instance_principal",
-      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
-      "export PATH=$PATH:/usr/local/bin:/home/${self.triggers.operator_user}/bin",
-      "kubectl delete configmap ${self.triggers.config_name} --namespace ${self.triggers.namespace} --ignore-not-found",
-    ]
-  }
-
   lifecycle {
     ignore_changes = [
       triggers["bastion_host"],
@@ -471,6 +461,44 @@ resource "null_resource" "nvidia_dcgm_exporter_metrics_via_operator" {
     module.oke,
     terraform_data.wait_for_non_gpu_workers,
   ]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+resource "terraform_data" "nvidia_dcgm_exporter_metrics_via_operator_cleanup" {
+  count = length(null_resource.nvidia_dcgm_exporter_metrics_via_operator)
+
+  triggers_replace = null_resource.nvidia_dcgm_exporter_metrics_via_operator[count.index].id
+
+  input = {
+    config_name     = null_resource.nvidia_dcgm_exporter_metrics_via_operator[count.index].triggers.config_name
+    namespace       = null_resource.nvidia_dcgm_exporter_metrics_via_operator[count.index].triggers.namespace
+    bastion_host    = module.oke.bastion_public_ip
+    bastion_user    = local.bastion_user
+    ssh_private_key = tls_private_key.stack_key.private_key_openssh
+    operator_host   = module.oke.operator_private_ip
+    operator_user   = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
+  provisioner "remote-exec" {
+    when = destroy
+    inline = [
+      "export OCI_CLI_AUTH=instance_principal",
+      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
+      "export PATH=$PATH:/usr/local/bin:/home/${self.output.operator_user}/bin",
+      "kubectl delete configmap ${self.output.config_name} --namespace ${self.output.namespace} --ignore-not-found",
+    ]
+  }
 }
 
 resource "kubectl_manifest" "amd_gpu_operator_namespace" {
@@ -553,17 +581,6 @@ resource "null_resource" "amd_device_metrics_exporter_metrics_via_operator" {
     ]
   }
 
-  provisioner "remote-exec" {
-    when = destroy
-    inline = [
-      "set -e",
-      "export OCI_CLI_AUTH=instance_principal",
-      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
-      "export PATH=\"$PATH:/usr/local/bin:/home/${self.triggers.operator_user}/bin\"",
-      "kubectl delete configmap ${self.triggers.config_name} --namespace ${self.triggers.namespace} --ignore-not-found",
-    ]
-  }
-
   lifecycle {
     ignore_changes = [
       triggers["bastion_host"],
@@ -578,6 +595,45 @@ resource "null_resource" "amd_device_metrics_exporter_metrics_via_operator" {
     module.oke,
     terraform_data.wait_for_non_gpu_workers,
   ]
+}
+
+# Input updates in place, so the destroy step uses the current operator.
+resource "terraform_data" "amd_device_metrics_exporter_metrics_via_operator_cleanup" {
+  count = length(null_resource.amd_device_metrics_exporter_metrics_via_operator)
+
+  triggers_replace = null_resource.amd_device_metrics_exporter_metrics_via_operator[count.index].id
+
+  input = {
+    config_name     = null_resource.amd_device_metrics_exporter_metrics_via_operator[count.index].triggers.config_name
+    namespace       = null_resource.amd_device_metrics_exporter_metrics_via_operator[count.index].triggers.namespace
+    bastion_host    = module.oke.bastion_public_ip
+    bastion_user    = local.bastion_user
+    ssh_private_key = tls_private_key.stack_key.private_key_openssh
+    operator_host   = module.oke.operator_private_ip
+    operator_user   = local.operator_user
+  }
+
+  connection {
+    bastion_host        = self.output.bastion_host
+    bastion_user        = self.output.bastion_user
+    bastion_private_key = self.output.ssh_private_key
+    host                = self.output.operator_host
+    user                = self.output.operator_user
+    private_key         = self.output.ssh_private_key
+    timeout             = "40m"
+    type                = "ssh"
+  }
+
+  provisioner "remote-exec" {
+    when = destroy
+    inline = [
+      "set -e",
+      "export OCI_CLI_AUTH=instance_principal",
+      "export PYTHONWARNINGS=\"ignore:the 'strict' parameter::urllib3.poolmanager\"",
+      "export PATH=\"$PATH:/usr/local/bin:/home/${self.output.operator_user}/bin\"",
+      "kubectl delete configmap ${self.output.config_name} --namespace ${self.output.namespace} --ignore-not-found",
+    ]
+  }
 }
 
 resource "oci_containerengine_addon" "coredns" {
@@ -727,6 +783,7 @@ resource "oci_containerengine_addon" "nvidia_gpu_operator" {
     terraform_data.wait_for_non_gpu_workers,
     kubectl_manifest.nvidia_dcgm_exporter_metrics,
     null_resource.nvidia_dcgm_exporter_metrics_via_operator,
+    terraform_data.nvidia_dcgm_exporter_metrics_via_operator_cleanup,
     oci_containerengine_addon.node_feature_discovery,
   ]
 }
@@ -756,6 +813,7 @@ resource "oci_containerengine_addon" "amd_gpu_operator" {
     terraform_data.wait_for_non_gpu_workers,
     kubectl_manifest.amd_device_metrics_exporter_metrics,
     null_resource.amd_device_metrics_exporter_metrics_via_operator,
+    terraform_data.amd_device_metrics_exporter_metrics_via_operator_cleanup,
     oci_containerengine_addon.node_feature_discovery,
     oci_containerengine_addon.amd_gpu_plugin,
   ]
