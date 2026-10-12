@@ -70,6 +70,8 @@ data:
     # Unbounded. A full queue blocks the request handler, and the health check with it.
     alert_queue = queue.Queue()
     notification_queue = queue.Queue()
+    # The health check fails when one of these threads stops, so the liveness probe restarts the pod.
+    daemon_threads = []
 
     def base64_decode(s):
         return base64.b64decode(s).decode('utf-8')
@@ -124,13 +126,13 @@ data:
                 "path": path
             }
 
-            response = requests.post(f"{grafana_service_url.rstrip('/')}/api/short-urls", json=payload, headers=headers)
+            response = requests.post(f"{grafana_service_url.rstrip('/')}/api/short-urls", json=payload, headers=headers, timeout=10)
             if response.status_code == 401:
                 # Grafana rejects the token, for example after its database was reset. Get a new one and retry once.
                 new_api_key = refresh_grafana_token(grafana_api_key)
                 if new_api_key and new_api_key != grafana_api_key:
                     headers["Authorization"] = f"Bearer {new_api_key}"
-                    response = requests.post(f"{grafana_service_url.rstrip('/')}/api/short-urls", json=payload, headers=headers)
+                    response = requests.post(f"{grafana_service_url.rstrip('/')}/api/short-urls", json=payload, headers=headers, timeout=10)
             logging.debug(f'Attempt to shorten {path} returned code {response.status_code} and response: {response.json()}')
             
             if response.status_code == 200:
@@ -458,6 +460,8 @@ data:
                 
     @app.get("/health")
     async def health_check():
+        if not all(t.is_alive() for t in daemon_threads):
+            return JSONResponse(content={"status": "unhealthy"}, status_code=503)
         return JSONResponse(content={"status": "healthy"}, status_code=200)
 
     @app.post('/log')
@@ -518,6 +522,7 @@ data:
 
         notification_processing_thread = Thread(target=notification_processing_daemon, daemon=True)
         notification_processing_thread.start()
+        daemon_threads.extend([alert_processing_thread, notification_processing_thread])
         logging.info("Alert and notification processing daemons started.")
 
 
