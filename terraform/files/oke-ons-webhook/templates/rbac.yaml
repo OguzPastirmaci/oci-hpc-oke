@@ -12,9 +12,15 @@ metadata:
   labels:
     {{- include "oke-ons-webhook.labels" . | nindent 4 }}
 rules:
+  # Kubernetes cannot limit create to one name.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "get", "list", "update"]
+    verbs: ["create"]
+  # Read and replace only the Grafana token secret.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ include "oke-ons-webhook.fullname" . | quote }}]
+    verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
