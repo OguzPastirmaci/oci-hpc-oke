@@ -34,7 +34,7 @@ data:
     from time import sleep
     from datetime import datetime, timedelta, time
     from pathlib import Path
-    from threading import Thread
+    from threading import Lock, Thread
 
     import oci
     import requests
@@ -56,6 +56,8 @@ data:
 
     grafana_service_url = os.environ.get("GRAFANA_SERVICE_URL")
     grafana_api_key = os.environ.get("grafana_api_key", "")
+    grafana_token_lock = Lock()
+    last_token_refresh = 0.0
 
     minimum_age_of_active_alert_to_include_in_reminder_in_seconds = int(os.environ.get("MIN_AGE_OF_ACTIVE_ALERT_TO_INCLUDE_IN_REMINDER_IN_SECONDS", "43200")) #12 hours
     maximum_age_of_alert_in_seconds = int(os.environ.get("MAX_AGE_OF_ALERT_IN_SECONDS", "259200")) #3 days
@@ -122,6 +124,12 @@ data:
             }
 
             response = requests.post(f"{grafana_service_url.rstrip('/')}/api/short-urls", json=payload, headers=headers)
+            if response.status_code == 401:
+                # Grafana rejects the token, for example after its database was reset. Get a new one and retry once.
+                new_api_key = refresh_grafana_token(grafana_api_key)
+                if new_api_key and new_api_key != grafana_api_key:
+                    headers["Authorization"] = f"Bearer {new_api_key}"
+                    response = requests.post(f"{grafana_service_url.rstrip('/')}/api/short-urls", json=payload, headers=headers)
             logging.debug(f'Attempt to shorten {path} returned code {response.status_code} and response: {response.json()}')
             
             if response.status_code == 200:
@@ -535,38 +543,53 @@ data:
             return ""
 
     def setup_grafana_token():
-        # attempt to get the token from secret
+        # Create a Grafana service account token and store it in the token secret
         try:
-            # create the service account
+            auth = ("admin", base64.b64decode(os.environ.get("GRAFANA_INITIAL_PASSWORD")))
+
+            # Create the service account, or find it when it already exists
             response = requests.post(
                 url=f"{grafana_service_url}/api/serviceaccounts",
                 json={
                     "name": "oci-hpc-monitoring",
                     "role": "Admin"
                 },
-                auth=("admin", base64.b64decode(os.environ.get("GRAFANA_INITIAL_PASSWORD"))),
+                auth=auth,
                 timeout=30
             )
 
-            if response.status_code != 201:
+            if response.status_code == 201:
+                service_account_id = response.json().get("id")
+            elif response.status_code in (400, 409):
+                response = requests.get(
+                    url=f"{grafana_service_url}/api/serviceaccounts/search",
+                    params={"query": "oci-hpc-monitoring"},
+                    auth=auth,
+                    timeout=30
+                )
+                accounts = [a for a in response.json().get("serviceAccounts", []) if a.get("name") == "oci-hpc-monitoring"] if response.status_code == 200 else []
+                if not accounts:
+                    raise Exception(f"Failed to find the Grafana service account. Status code: {response.status_code}, Response: {response.text}")
+                service_account_id = accounts[0].get("id")
+            else:
                 raise Exception(f"Failed to create Grafana service account. Status code: {response.status_code}, Response: {response.text}")
-            
-            # create the token for the service account
+
+            # Token names must be unique per service account
             response = requests.post(
-                url=f"{grafana_service_url}/api/serviceaccounts/{response.json().get("id")}/tokens",
+                url=f"{grafana_service_url}/api/serviceaccounts/{service_account_id}/tokens",
                 json={
-                    "name": "oci-hpc-monitoring-token"
+                    "name": f"oci-hpc-monitoring-token-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
                 },
-                auth=("admin", base64.b64decode(os.environ.get("GRAFANA_INITIAL_PASSWORD"))),
+                auth=auth,
                 timeout=30
             )
-            
+
             if response.status_code != 200:
                 raise Exception(f"Failed to create Grafana token. Status code: {response.status_code}, Response: {response.text}")
 
             grafana_token = response.json().get("key")
-            
-            # Store the token in a Kubernetes secret
+
+            # Store the token in a Kubernetes secret, replacing an old one
             config.load_incluster_config()
             v1 = client.CoreV1Api()
 
@@ -580,12 +603,34 @@ data:
                 }
             )
 
-            api_response = v1.create_namespaced_secret(namespace=os.environ.get("NAMESPACE"), body=secret)
+            try:
+                v1.create_namespaced_secret(namespace=os.environ.get("NAMESPACE"), body=secret)
+            except client.exceptions.ApiException as e:
+                if e.status != 409:
+                    raise
+                v1.replace_namespaced_secret(name=os.environ.get("TOKEN_NAME"), namespace=os.environ.get("NAMESPACE"), body=secret)
             return grafana_token
 
-        except Exception: # The secret doesn't exist
+        except Exception:
             logging.error(f"Failed to setup the grafana token: {traceback.format_exc()}")
             return ""
+
+    def refresh_grafana_token(rejected_api_key):
+        # Replace a token that Grafana rejects. Try at most once every 5 minutes,
+        # so a wrong admin password does not flood Grafana.
+        global grafana_api_key, last_token_refresh
+        with grafana_token_lock:
+            if grafana_api_key != rejected_api_key:
+                return grafana_api_key
+            now = datetime.now().timestamp()
+            if now - last_token_refresh < 300:
+                return grafana_api_key
+            last_token_refresh = now
+            logging.info("Grafana rejected the token. Creating a new one.")
+            new_api_key = setup_grafana_token()
+            if new_api_key:
+                grafana_api_key = new_api_key
+            return grafana_api_key
 
     if __name__ == '__main__':
         logging.basicConfig(level=logging.INFO)

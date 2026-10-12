@@ -20,6 +20,11 @@ resource "helm_release" "oke-ons-webhook" {
     {
       name  = "deploy.env.GRAFANA_SERVICE_URL"
       value = "http://kube-prometheus-stack-grafana"
+    },
+    # Not read by the chart. A changed chart file changes this value, so the release is upgraded.
+    {
+      name  = "chartChecksum"
+      value = sha256(join("", [for f in sort(fileset("${path.module}/files/oke-ons-webhook", "**")) : filesha256("${path.module}/files/oke-ons-webhook/${f}")]))
     }
   ]
   create_namespace  = false
