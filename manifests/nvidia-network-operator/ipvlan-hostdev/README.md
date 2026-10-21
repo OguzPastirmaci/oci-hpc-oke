@@ -235,10 +235,10 @@ The last line must start with `PASS`. Example output:
 RDMA netns mode: Y (Y = shared, N = exclusive)
 Allocated RDMA PFs: 16
 interface address device gid_index
-net1 10.239.255.129 mlx5_6 5
-net2 10.239.255.130 mlx5_7 5
+net1 10.239.255.1 mlx5_6 5
+net2 10.239.255.2 mlx5_7 5
 ...
-net16 10.239.255.144 mlx5_13 5
+net16 10.239.255.16 mlx5_13 5
 Host GID index 3 of mlx5_6 in this pod: 0000:0000:0000:0000:0000:0000:0000:0000
 PASS: 16 IPvlan interfaces have a RoCE v2 GID on an allocated RDMA PF (GID index: 5)
 ```
@@ -269,7 +269,14 @@ kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rdma-ipvlan-write-bw
 kubectl logs rdma-ipvlan-write-bw-client | grep -E '^(Client bandwidth summary|PASS|FAIL|ERROR)'
 ```
 
-The last line must be `PASS: ib_write_bw completed concurrently across all 16 IPvlan rails`. In the test, the 16 rails gave 41.72 to 56.28 Gbit/s each, 804.86 Gbit/s total.
+The last line must be `PASS: ib_write_bw completed concurrently across all 16 IPvlan rails`. The test ran twice:
+
+| Run | Per rail | Total |
+|---|---|---|
+| 1 | 41.72 to 56.28 Gbit/s | 804.86 Gbit/s |
+| 2, from a fresh clone of this guide | 38.04 to 51.64 Gbit/s | 746.03 Gbit/s |
+
+The 16 rails run at the same time, and the results change from run to run.
 
 Delete the test:
 
@@ -297,10 +304,10 @@ The test results were:
 
 | Size | Bus bandwidth, out of place | Bus bandwidth, in place |
 |---|---|---|
-| 4 GiB | 189.90 GB/s | 190.09 GB/s |
-| 8 GiB | 190.97 GB/s | 190.84 GB/s |
+| 4 GiB | 190.11 GB/s | 190.05 GB/s |
+| 8 GiB | 190.69 GB/s | 190.53 GB/s |
 
-The test had 0 wrong values.
+These results come from a run that followed this guide from a fresh clone. The test had 0 wrong values.
 
 The log shows `NCCL WARN NET/MLX5: Call to mlx5dv_devx_general_cmd failed with error Remote I/O error` once for each rank. The same message comes from the same test image on the host PFs with `hostNetwork: true`. It did not change the result.
 
