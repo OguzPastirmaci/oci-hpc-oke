@@ -124,6 +124,15 @@ done
 
 A `BM.GPU4.8` node took about 8 minutes to reboot in the test. The Oracle Cloud Agent configures the RDMA rails after the node starts, which took about 10 more minutes.
 
+Wait until all 16 RDMA rails of each node have an IPv4 address again:
+
+```bash
+for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 -o jsonpath='{.items[*].metadata.name}'); do
+  until [ "$(kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- chroot /host ip -4 -o addr show | grep -c ' rdma[0-9]* ')" = 16 ]; do sleep 60; done
+  echo "$NODE: 16 RDMA rails have an IPv4 address"
+done
+```
+
 Delete the debug pods, then repeat step 2 to confirm the new mode:
 
 ```bash
@@ -330,7 +339,7 @@ basename -a /sys/class/net/net*/device/infiniband/* | paste -sd, -
 
 1. Delete all pods that use VFs.
 2. Do step 3 with the new `NETNS_MODE` value.
-3. Wait until the operator creates the VFs again. Use the commands of step 7 to check the node states and the 16 VFs per node.
+3. Wait until the operator creates the VFs again. Use the `kubectl wait nodes` command of step 7.
 4. Apply the network file that matches the new mode (step 6). It replaces the network `rdma-vf`.
 5. Do step 8 to check the GIDs.
 
