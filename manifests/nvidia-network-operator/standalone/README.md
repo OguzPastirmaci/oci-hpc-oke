@@ -192,19 +192,11 @@ Both files create the network `rdma-vf` in the `default` namespace. Use the file
 kubectl apply -f sriov-network-node-policy.yaml
 ```
 
-The operator creates one VF on each of the 16 RDMA PFs of each node. In the test, this did not drain or reboot the nodes. Wait until every node state is `Succeeded`:
+The operator creates one VF on each of the 16 RDMA PFs of each node, one node at a time. In the test, this did not drain or reboot the nodes. Wait until each GPU node offers 16 VFs:
 
 ```bash
-kubectl -n nvidia-network-operator wait sriovnetworknodestates --all --for=jsonpath='{.status.syncStatus}'=Succeeded --timeout=15m
+kubectl wait nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 --for=jsonpath='{.status.allocatable.nvidia\.com/rdma-vf}'=16 --timeout=15m
 ```
-
-Make sure that each GPU node offers 16 VFs:
-
-```bash
-kubectl get nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 -o custom-columns='NODE:.metadata.name,RDMA-VF:.status.allocatable.nvidia\.com/rdma-vf'
-```
-
-The `RDMA-VF` column must show `16` for each node. The device plugin can need about one minute after the node state becomes `Succeeded`.
 
 ## Step 8. Check the GIDs in a pod
 
@@ -344,15 +336,19 @@ basename -a /sys/class/net/net*/device/infiniband/* | paste -sd, -
 
 ## Remove the configuration
 
-Delete the network, the VFs, and the operator:
+Delete the node policy. The operator then removes the VFs, one node at a time:
 
 ```bash
 kubectl delete -f sriov-network-node-policy.yaml
 ```
 
+Wait until no node reports VFs. The loop ends when the list is empty:
+
 ```bash
-kubectl -n nvidia-network-operator wait sriovnetworknodestates --all --for=jsonpath='{.status.syncStatus}'=Succeeded --timeout=15m
+until [ -z "$(kubectl -n nvidia-network-operator get sriovnetworknodestates -o jsonpath='{.items[*].status.interfaces[?(@.numVfs>0)].name}')" ]; do sleep 10; done
 ```
+
+Delete the network, the pool, and the operator:
 
 ```bash
 kubectl -n nvidia-network-operator delete sriovnetwork rdma-vf
@@ -364,6 +360,33 @@ kubectl delete -f sriov-network-pool-config.yaml -f ip-pool.yaml -f nic-cluster-
 
 ```bash
 helm uninstall network-operator -n nvidia-network-operator
+```
+
+Helm does not delete the CRDs. Delete them and the namespace:
+
+```bash
+kubectl delete crd --ignore-not-found \
+  hostdevicenetworks.mellanox.com ipoibnetworks.mellanox.com macvlannetworks.mellanox.com \
+  nicclusterpolicies.mellanox.com nicnodepolicies.mellanox.com \
+  ovsnetworks.sriovnetwork.openshift.io sriovibnetworks.sriovnetwork.openshift.io \
+  sriovnetworknodepolicies.sriovnetwork.openshift.io sriovnetworknodestates.sriovnetwork.openshift.io \
+  sriovnetworkpoolconfigs.sriovnetwork.openshift.io sriovnetworks.sriovnetwork.openshift.io \
+  sriovoperatorconfigs.sriovnetwork.openshift.io \
+  deviceattributes.sriovnetwork.k8snetworkplumbingwg.io sriovresourcepolicies.sriovnetwork.k8snetworkplumbingwg.io \
+  cidrpools.nv-ipam.nvidia.com ippools.nv-ipam.nvidia.com \
+  network-attachment-definitions.k8s.cni.cncf.io
+```
+
+```bash
+kubectl delete namespace nvidia-network-operator
+```
+
+Do not delete `clusterpolicies.nvidia.com` or `nvidiadrivers.nvidia.com`. The GPU Operator uses them.
+
+Remove the node labels that the operator added:
+
+```bash
+kubectl label nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 network.nvidia.com/operator.mofed.wait- network.nvidia.com/operator.nic-configuration.wait- sriovnetwork.openshift.io/device-plugin-
 ```
 
 The operator does not change the RDMA mode back. To restore the original mode, do step 3 with the original `NETNS_MODE` value.
