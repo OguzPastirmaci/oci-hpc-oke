@@ -271,14 +271,16 @@ kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rdma-vf-write-bw-cli
 kubectl logs rdma-vf-write-bw-client | grep -E '^(Client bandwidth summary|PASS|FAIL|ERROR)'
 ```
 
-The last line must be `PASS: ib_write_bw completed concurrently across all 16 VF pairs`. The test results were:
+The last line must be `PASS: ib_write_bw completed concurrently across all 16 VF pairs`. The test ran twice in each mode:
 
 | Mode | Per pair | Total |
 |---|---|---|
-| Exclusive | 41.59 to 56.88 Gbit/s | 768.11 Gbit/s |
-| Shared | 43.46 to 49.74 Gbit/s | 763.96 Gbit/s |
+| Exclusive, run 1 | 41.59 to 56.88 Gbit/s | 768.11 Gbit/s |
+| Exclusive, run 2 | 37.55 to 47.17 Gbit/s | 685.97 Gbit/s |
+| Shared, run 1 | 43.46 to 49.74 Gbit/s | 763.96 Gbit/s |
+| Shared, run 2 | 51.81 to 56.33 Gbit/s | 863.09 Gbit/s |
 
-The 16 pairs run at the same time. On the host PFs, the same test with the same image gave 50.29 to 54.03 Gbit/s per pair (842.93 Gbit/s total). One VF pair alone reached 97.97 Gbit/s.
+The 16 pairs run at the same time, and the results change from run to run. On the host PFs, the same test with the same image gave 50.29 to 54.03 Gbit/s per pair (842.93 Gbit/s total). One VF pair alone reached 97.97 Gbit/s.
 
 Delete the test:
 
@@ -306,10 +308,12 @@ The test results were:
 
 | Mode | Size | Bus bandwidth, out of place | Bus bandwidth, in place |
 |---|---|---|---|
-| Exclusive | 4 GiB | 190.07 GB/s | 190.25 GB/s |
-| Exclusive | 8 GiB | 190.90 GB/s | 190.83 GB/s |
-| Shared | 4 GiB | 189.79 GB/s | 189.93 GB/s |
-| Shared | 8 GiB | 190.91 GB/s | 191.08 GB/s |
+| Exclusive | 4 GiB | 190.09 GB/s | 189.49 GB/s |
+| Exclusive | 8 GiB | 190.54 GB/s | 190.80 GB/s |
+| Shared | 4 GiB | 189.82 GB/s | 189.98 GB/s |
+| Shared | 8 GiB | 190.87 GB/s | 191.07 GB/s |
+
+These results come from a run that followed this guide from a fresh clone. All runs had 0 wrong values.
 
 The same test on the host PFs with `hostNetwork: true` gave 190.99 GB/s out of place and 190.97 GB/s in place at 8 GiB.
 
