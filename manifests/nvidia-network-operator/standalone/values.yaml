@@ -1,5 +1,5 @@
 nfd:
-  # The cluster already runs Node Feature Discovery (for example from the GPU Operator).
+  # The cluster already runs Node Feature Discovery.
   enabled: false
 
 sriovNetworkOperator:
@@ -10,6 +10,6 @@ sriov-network-operator:
     deploy: true
     disableDrain: false
     configurationMode: daemon
-    # The OCI image owns the NIC firmware settings. This stops firmware changes and reboot requests.
+    # The OCI image already sets the NIC firmware for SR-IOV.
     disablePlugins:
       - mellanox

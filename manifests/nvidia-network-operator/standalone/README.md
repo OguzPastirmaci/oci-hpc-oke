@@ -6,7 +6,7 @@ This guide gives each pod one SR-IOV virtual function (VF) on every RDMA rail of
 
 The tested OCI HPC image uses NVIDIA DOCA-OFED. The DOCA-OFED RDMA core module (`ib_core`) shows a RoCE GID to a process only when the network interface of that GID is in the network namespace of the process. The upstream Linux kernel does not do this check.
 
-A pod that gets an RDMA device but no network interface on that device sees only zero GIDs in `/sys/class/infiniband/<device>/ports/1/gids/`. The driver also rejects address handles and queue pair connections that use those GIDs (`ENODEV`).
+A pod that gets an RDMA device but no network interface on that device sees only zero GIDs in `/sys/class/infiniband/<device>/ports/1/gids/`. The driver also rejects queue pair connections that use those GIDs (`ENODEV`).
 
 In this guide, each pod gets one VF network interface per rail inside its own network namespace. Each interface has its own IP address, so the pod has its own valid GIDs.
 
@@ -42,7 +42,7 @@ This guide changes the mode with a reboot of each GPU node.
 
 - `kubectl` access to the cluster, and Helm 3.
 - `git`.
-- Node Feature Discovery (NFD) runs in the cluster. The NVIDIA GPU Operator usually deploys it.
+- Node Feature Discovery (NFD) runs in the cluster.
 - No other Multus, SR-IOV Network Operator, NVIDIA Network Operator, or VF management tool runs in the cluster.
 - The MPI Operator, only for the NCCL test in step 9.
 
@@ -155,7 +155,7 @@ helm upgrade --install network-operator nvidia/network-operator \
   --version 26.7.0 --values values.yaml --wait --timeout 15m
 ```
 
-`values.yaml` disables the NFD that the chart includes, because the cluster already runs NFD. It also disables the `mellanox` plugin of the SR-IOV Network Operator, so that the operator does not change the NIC firmware or request a reboot.
+`values.yaml` disables the NFD that the chart includes, because the cluster already runs NFD. It also disables the `mellanox` plugin of the SR-IOV Network Operator. That plugin manages NIC firmware settings. On the tested image, the firmware already allows 127 VFs on each PF (`sriov_totalvfs`).
 
 Make sure that the SR-IOV Network Operator uses these settings:
 
