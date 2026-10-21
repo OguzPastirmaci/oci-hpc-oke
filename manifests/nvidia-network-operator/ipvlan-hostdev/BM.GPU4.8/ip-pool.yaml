@@ -1,0 +1,16 @@
+apiVersion: nv-ipam.nvidia.com/v1alpha1
+kind: IPPool
+metadata:
+  name: rdma-ipvlan-pool
+  namespace: nvidia-network-operator
+spec:
+  # Must be inside the RDMA rail subnet and unused. See step 7 of the README.
+  subnet: 10.239.255.0/24
+  perNodeBlockSize: 32
+  nodeSelector:
+    nodeSelectorTerms:
+      - matchExpressions:
+          - key: node.kubernetes.io/instance-type
+            operator: In
+            values:
+              - BM.GPU4.8

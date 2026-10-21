@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rdma-ipvlan-check
+  namespace: default
+  annotations:
+    k8s.v1.cni.cncf.io/networks: rdma-ipvlan-0,rdma-ipvlan-1,rdma-ipvlan-2,rdma-ipvlan-3,rdma-ipvlan-4,rdma-ipvlan-5,rdma-ipvlan-6,rdma-ipvlan-7,rdma-ipvlan-8,rdma-ipvlan-9,rdma-ipvlan-10,rdma-ipvlan-11,rdma-ipvlan-12,rdma-ipvlan-13,rdma-ipvlan-14,rdma-ipvlan-15
+spec:
+  restartPolicy: Never
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector:
+    node.kubernetes.io/instance-type: BM.GPU4.8
+  volumes:
+    - name: tools
+      configMap:
+        name: rdma-ipvlan-tools
+        defaultMode: 0555
+  containers:
+    - name: check
+      image: iad.ocir.io/idxzjcdglx2s/nccl-tests:cuda-13.4.1-ubuntu-24.04-nccl-2.32.3-100526.0
+      securityContext:
+        capabilities:
+          add: ["IPC_LOCK"]
+      volumeMounts:
+        - name: tools
+          mountPath: /opt/rdma-ipvlan
+          readOnly: true
+      resources:
+        limits:
+          nvidia.com/hostdev: 16
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -u
+          echo "RDMA netns mode: $(cat /sys/module/ib_core/parameters/netns_mode) (Y = shared, N = exclusive)"
+          allocated=" ${PCIDEVICE_NVIDIA_COM_HOSTDEV//,/ } "
+          echo "Allocated RDMA PFs: $(wc -w <<<"$allocated")"
+          echo "interface address device gid_index"
+          /opt/rdma-ipvlan/rail-map.sh | tee /tmp/map
+          rails=0
+          failed=0
+          indexes=""
+          while read -r iface ip dev idx; do
+            rails=$((rails + 1))
+            if [ "$dev" = none ] || [ "$idx" = none ]; then
+              echo "FAIL: $iface ($ip) has no RoCE v2 GID"
+              failed=1
+              continue
+            fi
+            IFS=. read -r o1 o2 o3 o4 <<<"$ip"
+            expected=$(printf '0000:0000:0000:0000:0000:ffff:%02x%02x:%02x%02x' "$o1" "$o2" "$o3" "$o4")
+            gid=$(cat "/sys/class/infiniband/$dev/ports/1/gids/$idx")
+            pci=$(basename "$(readlink -f "/sys/class/infiniband/$dev/device")")
+            if [ "$gid" != "$expected" ]; then
+              echo "FAIL: $iface GID $idx of $dev is $gid, expected $expected"
+              failed=1
+            elif [[ "$allocated" != *" $pci "* ]]; then
+              echo "FAIL: $dev ($pci) of $iface is not an allocated nvidia.com/hostdev device"
+              failed=1
+            fi
+            indexes="$indexes $idx"
+          done < /tmp/map
+          dev=$(awk 'NR == 1 {print $3}' /tmp/map)
+          echo "Host GID index 3 of $dev in this pod: $(cat "/sys/class/infiniband/$dev/ports/1/gids/3")"
+          index_list=$(tr ' ' '\n' <<<"$indexes" | sed '/^$/d' | sort -u | paste -sd' ' -)
+          if [ "$rails" -ne 16 ] || [ "$failed" -ne 0 ]; then
+            echo "FAIL: $rails IPvlan interfaces found, errors above"
+            exit 1
+          fi
+          echo "PASS: 16 IPvlan interfaces have a RoCE v2 GID on an allocated RDMA PF (GID index: $index_list)"

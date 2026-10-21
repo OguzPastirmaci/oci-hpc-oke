@@ -1,0 +1,52 @@
+# Scripts that the test pods use to find the RDMA device and GID index of each IPvlan interface.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rdma-ipvlan-tools
+  namespace: default
+data:
+  rail-map.sh: |
+    #!/bin/bash
+    # Prints one line for each IPvlan interface of this pod (net1, net2, ...):
+    # interface, IPv4 address, RDMA device, index of its RoCE v2 GID.
+    set -u
+    declare -A gid_dev gid_idx
+    for path in /sys/class/infiniband/*; do
+      dev=${path##*/}
+      for f in "$path"/ports/1/gid_attrs/ndevs/*; do
+        # The read fails for empty entries and for interfaces in other network namespaces.
+        { read -r ndev < "$f"; } 2>/dev/null || continue
+        case "$ndev" in net[0-9]*) ;; *) continue ;; esac
+        idx=${f##*/}
+        { read -r gid_type < "$path/ports/1/gid_attrs/types/$idx"; } 2>/dev/null || continue
+        [ "$gid_type" = "RoCE v2" ] || continue
+        read -r gid < "$path/ports/1/gids/$idx"
+        case "$gid" in 0000:0000:0000:0000:0000:ffff:*) ;; *) continue ;; esac
+        gid_dev[$ndev]=$dev
+        gid_idx[$ndev]=$idx
+      done
+    done
+    for path in /sys/class/net/net*; do
+      echo "${path##*/}"
+    done | sort -V | while read -r iface; do
+      ip=$(ip -4 -o addr show dev "$iface" | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
+      echo "$iface ${ip:-none} ${gid_dev[$iface]:-none} ${gid_idx[$iface]:-none}"
+    done
+  with-rails.sh: |
+    #!/bin/bash
+    # Sets NCCL_IB_HCA and NCCL_IB_GID_INDEX from the IPvlan interfaces of this pod, then runs the command.
+    set -euo pipefail
+    map=$(/opt/rdma-ipvlan/rail-map.sh)
+    if grep -q none <<<"$map"; then
+      echo "ERROR: an IPvlan interface has no address or no RoCE v2 GID:" >&2
+      echo "$map" >&2
+      exit 1
+    fi
+    NCCL_IB_HCA="=$(awk '{print $3}' <<<"$map" | paste -sd, -)"
+    indexes=$(awk '{print $4}' <<<"$map" | sort -u)
+    if [ "$(wc -l <<<"$indexes")" -ne 1 ]; then
+      echo "ERROR: the GID index is not the same on all rails: $(echo "$indexes" | paste -sd' ' -)" >&2
+      exit 1
+    fi
+    export NCCL_IB_HCA NCCL_IB_GID_INDEX=$indexes
+    exec "$@"

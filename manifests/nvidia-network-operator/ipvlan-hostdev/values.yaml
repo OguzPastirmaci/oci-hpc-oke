@@ -1,0 +1,7 @@
+nfd:
+  # The cluster already runs Node Feature Discovery.
+  enabled: false
+
+# This setup uses the PFs directly, so it does not need the SR-IOV Network Operator.
+sriovNetworkOperator:
+  enabled: false

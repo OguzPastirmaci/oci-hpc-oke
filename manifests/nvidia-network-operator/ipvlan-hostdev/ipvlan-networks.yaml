@@ -1,0 +1,513 @@
+# One IPvlan L2 child on each RDMA rail. The child uses the MAC address of its rail (rdmaN).
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-0
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-0",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma0",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-1
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-1",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma1",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-2
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-2",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma2",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-3
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-3",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma3",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-4
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-4",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma4",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-5
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-5",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma5",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-6
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-6",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma6",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-7
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-7",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma7",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-8
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-8",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma8",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-9
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-9",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma9",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-10
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-10",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma10",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-11
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-11",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma11",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-12
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-12",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma12",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-13
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-13",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma13",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-14
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-14",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma14",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-ipvlan-15
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "rdma-ipvlan-15",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "master": "rdma15",
+          "mode": "l2",
+          "ipam": { "type": "nv-ipam", "poolName": "rdma-ipvlan-pool" }
+        },
+        {
+          "type": "tuning",
+          "sysctl": {
+            "net.ipv4.conf.all.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.arp_announce": "2",
+            "net.ipv4.conf.IFNAME.arp_filter": "1",
+            "net.ipv4.conf.IFNAME.arp_ignore": "1",
+            "net.ipv4.conf.IFNAME.rp_filter": "0",
+            "net.ipv4.conf.IFNAME.accept_local": "1"
+          }
+        },
+        { "type": "sbr", "addSourceHints": true }
+      ]
+    }

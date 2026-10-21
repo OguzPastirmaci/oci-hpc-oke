@@ -1,0 +1,45 @@
+apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+spec:
+  # The OCI image supplies the DOCA-OFED driver, so no ofedDriver section.
+  sriovDevicePlugin:
+    image: sriov-network-device-plugin
+    repository: nvcr.io/nvidia/mellanox
+    version: network-operator-v26.7.0
+    # Exposes the 16 RDMA PFs of each BM.GPU4.8 node as nvidia.com/hostdev.
+    # The front-end NIC (0000:2d:00.0 and .1) is the same model, so the PFs are listed by PCI address.
+    config: |
+      {
+        "resourceList": [
+          {
+            "resourcePrefix": "nvidia.com",
+            "resourceName": "hostdev",
+            "selectors": {
+              "vendors": ["15b3"],
+              "isRdma": true,
+              "pciAddresses": [
+                "0000:0c:00.0", "0000:0c:00.1", "0000:16:00.0", "0000:16:00.1",
+                "0000:48:00.0", "0000:48:00.1", "0000:4c:00.0", "0000:4c:00.1",
+                "0000:8a:00.0", "0000:8a:00.1", "0000:94:00.0", "0000:94:00.1",
+                "0000:c3:00.0", "0000:c3:00.1", "0000:d1:00.0", "0000:d1:00.1"
+              ]
+            }
+          }
+        ]
+      }
+  nvIpam:
+    image: nvidia-k8s-ipam
+    repository: nvcr.io/nvidia/mellanox
+    version: network-operator-v26.7.0
+    enableWebhook: false
+  secondaryNetwork:
+    cniPlugins:
+      image: plugins
+      repository: nvcr.io/nvidia/mellanox
+      version: network-operator-v26.7.0
+    multus:
+      image: multus-cni
+      repository: nvcr.io/nvidia/mellanox
+      version: network-operator-v26.7.0
