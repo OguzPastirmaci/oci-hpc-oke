@@ -10,6 +10,23 @@ A pod that gets an RDMA device but no network interface on that device sees only
 
 In this guide, each pod gets one VF network interface per rail inside its own network namespace. Each interface has its own IP address, so the pod has its own valid GIDs.
 
+## Files and shapes
+
+The files in this directory do not depend on the shape. Each shape folder holds the files that do:
+
+| Folder | Status |
+|---|---|
+| `BM.GPU4.8` | Tested. See [Tested environment](#tested-environment). |
+| `BM.GPU.B300.8` | Not tested. The PCI addresses and the MTU come from `terraform/files/nvidia-network-operator/sriov-network-node-policy.yaml` in this repository. The NCCL settings come from `manifests/nccl-tests/virtual-functions/mpi-operator/BM.GPU.B300.8.yaml`. |
+
+Each shape folder contains:
+
+- `sriov-network-node-policy.yaml`: the PCI addresses of the 16 RDMA PFs, the MTU, and one VF per PF.
+- `sriov-network-pool-config.yaml`: the operator configures one node of the shape at a time.
+- `vf-check.yaml`, `ib-write-bw-all-vfs.yaml`, `nccl-test.yaml`: the tests.
+
+The IP pool and the networks in this directory use IPv4 addresses. They were tested only on IPv4 RDMA rails.
+
 ## Tested environment
 
 | Item | Value |
@@ -23,7 +40,7 @@ In this guide, each pod gets one VF network interface per rail inside its own ne
 | Helm | 3.22.1 |
 | RDMA rails | IPv4, MTU 4220 |
 
-The guide was not tested on other shapes, other images, or IPv6 RDMA rails. The files in this directory use the `BM.GPU4.8` node label and the `BM.GPU4.8` PCI addresses.
+The guide was not tested on other shapes, other images, or IPv6 RDMA rails.
 
 ## RDMA network namespace modes
 
@@ -44,25 +61,9 @@ This guide changes the mode with a reboot of each GPU node.
 - `git`.
 - Node Feature Discovery (NFD) runs in the cluster.
 - No other Multus, SR-IOV Network Operator, NVIDIA Network Operator, or VF management tool runs in the cluster.
-- The MPI Operator, only for the NCCL test in step 9.
+- The MPI Operator, only for the NCCL test in step 10.
 
-Make sure that NFD labels the GPU nodes as SR-IOV capable:
-
-```bash
-kubectl get nodes -l node.kubernetes.io/instance-type=BM.GPU4.8,feature.node.kubernetes.io/network-sriov.capable=true
-```
-
-Each `BM.GPU4.8` node must be in the output.
-
-Make sure that no other Multus or SR-IOV component runs:
-
-```bash
-kubectl get daemonsets -A | grep -i -E 'multus|sriov|network-operator' || echo "none found"
-```
-
-The output must be `none found`.
-
-## Step 1. Get the files
+## Step 1. Get the files and set the shape
 
 ```bash
 git clone --branch doca-vf-network-operator https://github.com/OguzPastirmaci/oci-hpc-oke.git
@@ -72,12 +73,36 @@ git clone --branch doca-vf-network-operator https://github.com/OguzPastirmaci/oc
 cd oci-hpc-oke/manifests/nvidia-network-operator/standalone
 ```
 
-Run all later commands from this directory.
-
-## Step 2. Check the current RDMA mode
+Set `SHAPE` to the shape of your GPU nodes. Use the name of a shape folder, `BM.GPU4.8` or `BM.GPU.B300.8`:
 
 ```bash
-for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 -o jsonpath='{.items[*].metadata.name}'); do
+SHAPE=BM.GPU4.8
+```
+
+Run all later commands from this directory and in the same shell, because they use `SHAPE`.
+
+## Step 2. Check the prerequisites
+
+Make sure that NFD labels the GPU nodes as SR-IOV capable:
+
+```bash
+kubectl get nodes -l node.kubernetes.io/instance-type="$SHAPE",feature.node.kubernetes.io/network-sriov.capable=true
+```
+
+Each GPU node of the shape must be in the output.
+
+Make sure that no other Multus or SR-IOV component runs:
+
+```bash
+kubectl get daemonsets -A | grep -i -E 'multus|sriov|network-operator' || echo "none found"
+```
+
+The output must be `none found`.
+
+## Step 3. Check the current RDMA mode
+
+```bash
+for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type="$SHAPE" -o jsonpath='{.items[*].metadata.name}'); do
   echo "$NODE netns_mode=$(kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- cat /host/sys/module/ib_core/parameters/netns_mode)"
 done
 ```
@@ -90,9 +115,9 @@ The command leaves completed `node-debugger-*` pods. Delete them:
 kubectl get pods -o name | grep node-debugger- | xargs -r kubectl delete
 ```
 
-## Step 3. Change the RDMA mode (only if needed)
+## Step 4. Change the RDMA mode (only if needed)
 
-Do this step only when the current mode is not the mode that you want. Do it before step 4 when you can. To change the mode after the VFs exist, read [Change the RDMA mode later](#change-the-rdma-mode-later).
+Do this step only when the current mode is not the mode that you want. Do it before step 5 when you can. To change the mode after the VFs exist, read [Change the RDMA mode later](#change-the-rdma-mode-later).
 
 Set `NETNS_MODE` to `1` for shared or `0` for exclusive:
 
@@ -103,7 +128,7 @@ NETNS_MODE=1
 Write the setting on every GPU node and rebuild the initramfs:
 
 ```bash
-for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 -o jsonpath='{.items[*].metadata.name}'); do
+for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type="$SHAPE" -o jsonpath='{.items[*].metadata.name}'); do
   kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- \
     chroot /host bash -c "echo 'options ib_core netns_mode=$NETNS_MODE' > /etc/modprobe.d/ib_core.conf && update-initramfs -u -k all"
 done
@@ -112,7 +137,7 @@ done
 Reboot the GPU nodes one at a time. The loop drains each node, reboots it, waits until it is `Ready` with a new boot ID, and uncordons it:
 
 ```bash
-for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 -o jsonpath='{.items[*].metadata.name}'); do
+for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type="$SHAPE" -o jsonpath='{.items[*].metadata.name}'); do
   BOOT_ID=$(kubectl get node "$NODE" -o jsonpath='{.status.nodeInfo.bootID}')
   kubectl drain "$NODE" --ignore-daemonsets --delete-emptydir-data --timeout=15m
   kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- chroot /host systemctl reboot
@@ -124,22 +149,22 @@ done
 
 A `BM.GPU4.8` node took about 8 minutes to reboot in the test. The Oracle Cloud Agent configures the RDMA rails after the node starts, which took about 10 more minutes.
 
-Wait until all 16 RDMA rails of each node have an IPv4 address again:
+Wait until all 16 RDMA rails of each node have an IP address again:
 
 ```bash
-for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 -o jsonpath='{.items[*].metadata.name}'); do
-  until [ "$(kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- chroot /host ip -4 -o addr show | grep -c ' rdma[0-9]* ')" = 16 ]; do sleep 60; done
-  echo "$NODE: 16 RDMA rails have an IPv4 address"
+for NODE in $(kubectl get nodes -l node.kubernetes.io/instance-type="$SHAPE" -o jsonpath='{.items[*].metadata.name}'); do
+  until [ "$(kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- chroot /host ip -o addr show scope global | awk '$2 ~ /^rdma[0-9]+$/ {print $2}' | sort -u | wc -l)" -eq 16 ]; do sleep 60; done
+  echo "$NODE: 16 RDMA rails have an IP address"
 done
 ```
 
-Delete the debug pods, then repeat step 2 to confirm the new mode:
+Delete the debug pods, then repeat step 3 to confirm the new mode:
 
 ```bash
 kubectl get pods -o name | grep node-debugger- | xargs -r kubectl delete
 ```
 
-## Step 4. Install the NVIDIA Network Operator
+## Step 5. Install the NVIDIA Network Operator
 
 ```bash
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
@@ -165,7 +190,7 @@ kubectl -n nvidia-network-operator get sriovoperatorconfig default -o jsonpath='
 
 The output must be `daemon false ["mellanox"]`.
 
-## Step 5. Deploy Multus, the CNI plugins, and NV-IPAM
+## Step 6. Deploy Multus, the CNI plugins, and NV-IPAM
 
 ```bash
 kubectl apply -f nic-cluster-policy.yaml
@@ -175,10 +200,10 @@ kubectl apply -f nic-cluster-policy.yaml
 kubectl wait --for=jsonpath='{.status.state}'=ready nicclusterpolicy/nic-cluster-policy --timeout=15m
 ```
 
-## Step 6. Create the IP pool and the network
+## Step 7. Create the IP pool and the network
 
 ```bash
-kubectl apply -f ip-pool.yaml -f sriov-network-pool-config.yaml
+kubectl apply -f ip-pool.yaml -f "$SHAPE/sriov-network-pool-config.yaml"
 ```
 
 For exclusive mode, apply the exclusive network:
@@ -193,24 +218,24 @@ For shared mode, apply the shared network instead:
 kubectl apply -f sriov-network-shared.yaml
 ```
 
-Both files create the network `rdma-vf` in the `default` namespace. Use the file that matches the mode from step 2.
+Both files create the network `rdma-vf` in the `default` namespace. Use the file that matches the mode from step 3.
 
-## Step 7. Create the VFs
+## Step 8. Create the VFs
 
 ```bash
-kubectl apply -f sriov-network-node-policy.yaml
+kubectl apply -f "$SHAPE/sriov-network-node-policy.yaml"
 ```
 
 The operator creates one VF on each of the 16 RDMA PFs of each node, one node at a time. In the test, this did not drain or reboot the nodes. Wait until each GPU node offers 16 VFs:
 
 ```bash
-kubectl wait nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 --for=jsonpath='{.status.allocatable.nvidia\.com/rdma-vf}'=16 --timeout=15m
+kubectl wait nodes -l node.kubernetes.io/instance-type="$SHAPE" --for=jsonpath='{.status.allocatable.nvidia\.com/rdma-vf}'=16 --timeout=15m
 ```
 
-## Step 8. Check the GIDs in a pod
+## Step 9. Check the GIDs in a pod
 
 ```bash
-kubectl apply -f vf-check.yaml
+kubectl apply -f "$SHAPE/vf-check.yaml"
 ```
 
 ```bash
@@ -221,7 +246,7 @@ kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rdma-vf-check --time
 kubectl logs rdma-vf-check
 ```
 
-The last line must start with `PASS`. Example output in exclusive mode:
+The last line must start with `PASS`. Example output on `BM.GPU4.8` in exclusive mode:
 
 ```text
 RDMA netns mode: N (Y = shared, N = exclusive)
@@ -250,17 +275,17 @@ PASS: GID index 3 of mlx5_30 is the RoCE v2 GID of 192.168.1.45
 Delete the pod:
 
 ```bash
-kubectl delete -f vf-check.yaml
+kubectl delete -f "$SHAPE/vf-check.yaml"
 ```
 
-## Step 9. Test the RDMA bandwidth
+## Step 10. Test the RDMA bandwidth
 
 ### All 16 VF pairs with ib_write_bw
 
 The test starts one pod with 16 VFs on each of two GPU nodes. It runs `ib_write_bw` on all 16 VF pairs at the same time. The client also checks that the route to each server address uses the matching VF.
 
 ```bash
-kubectl apply -f ib-write-bw-all-vfs.yaml
+kubectl apply -f "$SHAPE/ib-write-bw-all-vfs.yaml"
 ```
 
 ```bash
@@ -271,7 +296,7 @@ kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rdma-vf-write-bw-cli
 kubectl logs rdma-vf-write-bw-client | grep -E '^(Client bandwidth summary|PASS|FAIL|ERROR)'
 ```
 
-The last line must be `PASS: ib_write_bw completed concurrently across all 16 VF pairs`. The test ran twice in each mode:
+The last line must be `PASS: ib_write_bw completed concurrently across all 16 VF pairs`. On `BM.GPU4.8`, the test ran twice in each mode:
 
 | Mode | Per pair | Total |
 |---|---|---|
@@ -285,15 +310,20 @@ The 16 pairs run at the same time, and the results change from run to run. On th
 Delete the test:
 
 ```bash
-kubectl delete -f ib-write-bw-all-vfs.yaml
+kubectl delete -f "$SHAPE/ib-write-bw-all-vfs.yaml"
 ```
 
 ### NCCL all_reduce over 16 VFs per node
 
-This test needs the MPI Operator. It runs `all_reduce_perf` with 8 GPUs and 16 VFs on each of two GPU nodes. Each rank sets `NCCL_IB_HCA` to the RDMA devices of the VFs in its own pod. The 40 GB GPUs cannot hold 16 GiB buffers with validation, so the test stops at 8 GiB.
+This test needs the MPI Operator. It runs `all_reduce_perf` with 8 GPUs and 16 VFs on each GPU node. Each rank sets `NCCL_IB_HCA` to the RDMA devices of the VFs in its own pod.
+
+| Shape | Worker nodes | Largest message |
+|---|---|---|
+| `BM.GPU4.8` | 2 | 8 GiB. The 40 GB GPUs cannot hold 16 GiB buffers with validation. |
+| `BM.GPU.B300.8` | 4 | 16 GiB |
 
 ```bash
-kubectl apply -f nccl-test.yaml
+kubectl apply -f "$SHAPE/nccl-test.yaml"
 ```
 
 ```bash
@@ -304,7 +334,7 @@ kubectl wait --for=condition=Succeeded mpijob/nccl-test-vf --timeout=20m
 kubectl logs job/nccl-test-vf-launcher | grep -E '^ +[0-9]{9,}|Out of bounds'
 ```
 
-The test results were:
+The results on `BM.GPU4.8` were:
 
 | Mode | Size | Bus bandwidth, out of place | Bus bandwidth, in place |
 |---|---|---|---|
@@ -322,12 +352,12 @@ The log shows `NCCL WARN NET/MLX5: Call to mlx5dv_devx_general_cmd failed with e
 Delete the test:
 
 ```bash
-kubectl delete -f nccl-test.yaml
+kubectl delete -f "$SHAPE/nccl-test.yaml"
 ```
 
 ## Use the VFs in your own pods
 
-Use `nccl-test.yaml` as the example. A pod that uses the VFs needs these settings:
+Use `nccl-test.yaml` in the shape folder as the example. A pod that uses the VFs needs these settings:
 
 - The annotation `k8s.v1.cni.cncf.io/networks` with `rdma-vf` once for each VF. For 16 VFs, list `rdma-vf` 16 times, separated by commas.
 - The resource limit `nvidia.com/rdma-vf` with the same number.
@@ -342,17 +372,17 @@ basename -a /sys/class/net/net*/device/infiniband/* | paste -sd, -
 ## Change the RDMA mode later
 
 1. Delete all pods that use VFs.
-2. Do step 3 with the new `NETNS_MODE` value.
-3. Wait until the operator creates the VFs again. Use the `kubectl wait nodes` command of step 7.
-4. Apply the network file that matches the new mode (step 6). It replaces the network `rdma-vf`.
-5. Do step 8 to check the GIDs.
+2. Do step 4 with the new `NETNS_MODE` value.
+3. Wait until the operator creates the VFs again. Use the `kubectl wait nodes` command of step 8.
+4. Apply the network file that matches the new mode (step 7). It replaces the network `rdma-vf`.
+5. Do step 9 to check the GIDs.
 
 ## Remove the configuration
 
 Delete the node policy. The operator then removes the VFs, one node at a time:
 
 ```bash
-kubectl delete -f sriov-network-node-policy.yaml
+kubectl delete -f "$SHAPE/sriov-network-node-policy.yaml"
 ```
 
 Wait until no node reports VFs. The loop ends when the list is empty:
@@ -368,7 +398,7 @@ kubectl -n nvidia-network-operator delete sriovnetwork rdma-vf
 ```
 
 ```bash
-kubectl delete -f sriov-network-pool-config.yaml -f ip-pool.yaml -f nic-cluster-policy.yaml
+kubectl delete -f "$SHAPE/sriov-network-pool-config.yaml" -f ip-pool.yaml -f nic-cluster-policy.yaml
 ```
 
 ```bash
@@ -399,7 +429,7 @@ Do not delete `clusterpolicies.nvidia.com` or `nvidiadrivers.nvidia.com`. The GP
 Remove the node labels that the operator added:
 
 ```bash
-kubectl label nodes -l node.kubernetes.io/instance-type=BM.GPU4.8 network.nvidia.com/operator.mofed.wait- network.nvidia.com/operator.nic-configuration.wait- sriovnetwork.openshift.io/device-plugin-
+kubectl label nodes -l node.kubernetes.io/instance-type="$SHAPE" network.nvidia.com/operator.mofed.wait- network.nvidia.com/operator.nic-configuration.wait- sriovnetwork.openshift.io/device-plugin-
 ```
 
-The operator does not change the RDMA mode back. To restore the original mode, do step 3 with the original `NETNS_MODE` value.
+The operator does not change the RDMA mode back. To restore the original mode, do step 4 with the original `NETNS_MODE` value.

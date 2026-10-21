@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rdma-vf-check
+  annotations:
+    k8s.v1.cni.cncf.io/networks: rdma-vf
+spec:
+  restartPolicy: Never
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector:
+    node.kubernetes.io/instance-type: BM.GPU.B300.8
+  containers:
+    - name: check
+      image: iad.ocir.io/idxzjcdglx2s/nccl-tests:cuda-13.4.1-ubuntu-24.04-nccl-2.32.3-100526.0
+      securityContext:
+        capabilities:
+          add: ["IPC_LOCK"]
+      resources:
+        limits:
+          nvidia.com/rdma-vf: 1
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -u
+          echo "RDMA netns mode: $(cat /sys/module/ib_core/parameters/netns_mode) (Y = shared, N = exclusive)"
+          echo "RDMA devices visible in the pod: $(find /sys/class/infiniband -mindepth 1 -maxdepth 1 | wc -l)"
+          echo "Character devices: $(find /dev/infiniband -mindepth 1 -maxdepth 1 -printf '%f ')"
+          ip=$(ip -4 -o addr show dev net1 | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
+          dev=$(ls /sys/class/net/net1/device/infiniband)
+          echo "VF interface net1: ip=$ip rdma_device=$dev"
+          for i in 0 1 2 3; do
+            echo "  gid $i: $(cat "/sys/class/infiniband/$dev/ports/1/gids/$i") $(cat "/sys/class/infiniband/$dev/ports/1/gid_attrs/types/$i" 2>&1)"
+          done
+          IFS=. read -r o1 o2 o3 o4 <<< "$ip"
+          expected=$(printf '0000:0000:0000:0000:0000:ffff:%02x%02x:%02x%02x' "$o1" "$o2" "$o3" "$o4")
+          gid3=$(cat "/sys/class/infiniband/$dev/ports/1/gids/3")
+          type3=$(cat "/sys/class/infiniband/$dev/ports/1/gid_attrs/types/3" 2>&1)
+          for path in /sys/class/infiniband/*; do
+            other=$(basename "$path")
+            if [ "$other" != "$dev" ]; then
+              echo "Other RDMA device $other gid 3: $(cat "$path/ports/1/gids/3")"
+              break
+            fi
+          done
+          if [ "$gid3" = "$expected" ] && [ "$type3" = "RoCE v2" ]; then
+            echo "PASS: GID index 3 of $dev is the RoCE v2 GID of $ip"
+          else
+            echo "FAIL: GID index 3 of $dev is $gid3 ($type3), expected $expected (RoCE v2)"
+            exit 1
+          fi
