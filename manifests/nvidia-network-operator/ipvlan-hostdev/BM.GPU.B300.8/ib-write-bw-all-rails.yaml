@@ -1,0 +1,322 @@
+# Runs ib_write_bw on all 16 IPvlan rails between two GPU nodes at the same time.
+# The test control connection uses the pod network (eth0). The RDMA traffic uses the IPvlan GIDs.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rdma-ipvlan-write-bw
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rdma-ipvlan-write-bw
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["rdma-ipvlan-write-bw-server"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rdma-ipvlan-write-bw
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: rdma-ipvlan-write-bw
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rdma-ipvlan-write-bw
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rdma-ipvlan-write-bw
+  namespace: default
+data:
+  server.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base_port=18515
+    annotation=rdma-ipvlan-write-bw/server-rails
+    api="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
+    token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    namespace=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+    pod_url="${api}/api/v1/namespaces/${namespace}/pods/${HOSTNAME}"
+    test_options=(-F --report_gbits --tclass=41 -q 4 -s 65536 -D 10)
+
+    map=$(/opt/rdma-ipvlan/rail-map.sh)
+    if grep -q none <<<"$map"; then
+      echo "ERROR: an IPvlan interface has no address or no RoCE v2 GID:" >&2
+      echo "$map" >&2
+      exit 1
+    fi
+
+    declare -a server_pids
+    published=
+    index=0
+    while read -r iface ip dev idx; do
+      index=$((index + 1))
+      port=$((base_port + index - 1))
+      published="${published}${published:+,}${index}|${iface}|${ip}|${dev}|${idx}|${port}"
+      echo "Server rail $index: interface=$iface ip=$ip device=$dev gid_index=$idx port=$port"
+      timeout 180 ib_write_bw "${test_options[@]}" -x "$idx" -p "$port" -d "$dev" \
+        >"/tmp/server-rail-${index}.log" 2>&1 &
+      server_pids[index]=$!
+    done <<<"$map"
+    rail_count=$index
+
+    cleanup() {
+      for pid in "${server_pids[@]}"; do
+        kill "$pid" 2>/dev/null || true
+      done
+    }
+    trap cleanup EXIT
+
+    sleep 2
+    for index in $(seq 1 "$rail_count"); do
+      if ! kill -0 "${server_pids[index]}" 2>/dev/null; then
+        echo "ERROR: ib_write_bw server for rail $index exited before publication" >&2
+        cat "/tmp/server-rail-${index}.log" >&2 || true
+        exit 1
+      fi
+    done
+
+    patch=$(jq -cn --arg k "$annotation" --arg v "$published" '{metadata: {annotations: {($k): $v}}}')
+    curl -fsS --cacert "$ca" -H "Authorization: Bearer ${token}" \
+      -H 'Content-Type: application/merge-patch+json' -X PATCH --data "$patch" "$pod_url" >/dev/null
+    echo "Published all $rail_count server rails for the client"
+
+    failed=0
+    for index in $(seq 1 "$rail_count"); do
+      set +e
+      wait "${server_pids[index]}"
+      rc=$?
+      set -e
+      echo "===== server rail $index rc=$rc ====="
+      cat "/tmp/server-rail-${index}.log"
+      [ "$rc" -eq 0 ] || failed=1
+    done
+    if [ "$failed" -ne 0 ]; then
+      echo "FAIL: one or more ib_write_bw server rails failed" >&2
+      exit 1
+    fi
+    echo "Server completed all $rail_count rails successfully"
+  client.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    server_pod=rdma-ipvlan-write-bw-server
+    annotation=rdma-ipvlan-write-bw/server-rails
+    api="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
+    token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    namespace=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+    server_url="${api}/api/v1/namespaces/${namespace}/pods/${server_pod}"
+    test_options=(-F --report_gbits --tclass=41 -q 4 -s 65536 -D 10)
+
+    echo "Waiting for the server to publish its rails..."
+    server_rails=
+    server_ip=
+    for _ in $(seq 1 300); do
+      server_json=$(curl -fsS --cacert "$ca" -H "Authorization: Bearer ${token}" "$server_url" 2>/dev/null || true)
+      server_rails=$(jq -r --arg k "$annotation" '.metadata.annotations[$k] // ""' <<<"$server_json" 2>/dev/null || true)
+      server_ip=$(jq -r '.status.podIP // ""' <<<"$server_json" 2>/dev/null || true)
+      server_phase=$(jq -r '.status.phase // ""' <<<"$server_json" 2>/dev/null || true)
+      [ -n "$server_rails" ] && break
+      if [ "$server_phase" = "Failed" ] || [ "$server_phase" = "Succeeded" ]; then
+        echo "ERROR: server entered phase $server_phase before publishing its rails" >&2
+        exit 1
+      fi
+      sleep 2
+    done
+    if [ -z "$server_rails" ] || [ -z "$server_ip" ]; then
+      echo "ERROR: timed out waiting for the server rails" >&2
+      exit 1
+    fi
+    echo "Server pod address for the test control connection: $server_ip"
+
+    map=$(/opt/rdma-ipvlan/rail-map.sh)
+    if grep -q none <<<"$map"; then
+      echo "ERROR: an IPvlan interface has no address or no RoCE v2 GID:" >&2
+      echo "$map" >&2
+      exit 1
+    fi
+    declare -A client_dev client_idx client_ip
+    while read -r iface ip dev idx; do
+      client_dev[$iface]=$dev
+      client_idx[$iface]=$idx
+      client_ip[$iface]=$ip
+    done <<<"$map"
+
+    declare -a client_pids
+    rail_count=0
+    while IFS='|' read -r index iface ip dev idx port; do
+      rail_count=$((rail_count + 1))
+      if [ -z "${client_dev[$iface]:-}" ]; then
+        echo "ERROR: this pod has no interface $iface for server rail $index" >&2
+        exit 1
+      fi
+      echo "Rail $index: $iface client ${client_ip[$iface]} ${client_dev[$iface]} gid ${client_idx[$iface]} -> server $ip $dev gid $idx port $port"
+      timeout 180 ib_write_bw "${test_options[@]}" -x "${client_idx[$iface]}" -p "$port" \
+        -d "${client_dev[$iface]}" "$server_ip" >"/tmp/client-rail-${index}.log" 2>&1 &
+      client_pids[index]=$!
+    done < <(tr ',' '\n' <<<"$server_rails")
+
+    failed=0
+    for index in $(seq 1 "$rail_count"); do
+      set +e
+      wait "${client_pids[index]}"
+      rc=$?
+      set -e
+      echo "===== client rail $index rc=$rc ====="
+      cat "/tmp/client-rail-${index}.log"
+      [ "$rc" -eq 0 ] || failed=1
+    done
+
+    result_count=$(awk '$1 == 65536 { count++ } END { print count + 0 }' /tmp/client-rail-*.log)
+    summary=$(awk '$1 == 65536 {
+        if (count == 0 || $4 < min) min = $4
+        if (count == 0 || $4 > max) max = $4
+        sum += $4; count++
+      }
+      END { printf "rails=%d min=%.2f max=%.2f aggregate=%.2f Gbit/sec", count, min, max, sum }' /tmp/client-rail-*.log)
+    echo "Client bandwidth summary: $summary"
+    if [ "$rail_count" -ne 16 ] || [ "$result_count" -ne 16 ]; then
+      echo "ERROR: expected 16 rails with results, found $rail_count rails and $result_count results" >&2
+      failed=1
+    fi
+
+    server_phase=
+    for _ in $(seq 1 240); do
+      server_phase=$(curl -fsS --cacert "$ca" -H "Authorization: Bearer ${token}" "$server_url" 2>/dev/null | jq -r '.status.phase // ""' 2>/dev/null || true)
+      if [ "$server_phase" = "Succeeded" ] || [ "$server_phase" = "Failed" ]; then
+        break
+      fi
+      sleep 1
+    done
+    if [ "$server_phase" != "Succeeded" ]; then
+      echo "ERROR: server phase is ${server_phase:-unknown}" >&2
+      failed=1
+    fi
+    if [ "$failed" -ne 0 ]; then
+      echo "FAIL: one or more of the 16 IPvlan rails failed ib_write_bw" >&2
+      exit 1
+    fi
+    echo "PASS: ib_write_bw completed concurrently across all 16 IPvlan rails"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rdma-ipvlan-write-bw-client
+  namespace: default
+  labels:
+    app: rdma-ipvlan-write-bw
+  annotations:
+    k8s.v1.cni.cncf.io/networks: rdma-ipvlan-0,rdma-ipvlan-1,rdma-ipvlan-2,rdma-ipvlan-3,rdma-ipvlan-4,rdma-ipvlan-5,rdma-ipvlan-6,rdma-ipvlan-7,rdma-ipvlan-8,rdma-ipvlan-9,rdma-ipvlan-10,rdma-ipvlan-11,rdma-ipvlan-12,rdma-ipvlan-13,rdma-ipvlan-14,rdma-ipvlan-15
+spec:
+  serviceAccountName: rdma-ipvlan-write-bw
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector:
+    node.kubernetes.io/instance-type: BM.GPU.B300.8
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: rdma-ipvlan-write-bw
+          topologyKey: kubernetes.io/hostname
+  volumes:
+    - name: tools
+      configMap:
+        name: rdma-ipvlan-tools
+        defaultMode: 0555
+    - name: scripts
+      configMap:
+        name: rdma-ipvlan-write-bw
+        defaultMode: 0555
+  containers:
+    - name: client
+      image: iad.ocir.io/idxzjcdglx2s/nccl-tests:cuda-13.4.1-ubuntu-24.04-nccl-2.32.3-100526.0
+      command: ["/scripts/client.sh"]
+      securityContext:
+        capabilities:
+          add: ["IPC_LOCK"]
+      volumeMounts:
+        - name: tools
+          mountPath: /opt/rdma-ipvlan
+          readOnly: true
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+      resources:
+        requests:
+          cpu: "8"
+          memory: 2Gi
+        limits:
+          nvidia.com/hostdev: 16
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rdma-ipvlan-write-bw-server
+  namespace: default
+  labels:
+    app: rdma-ipvlan-write-bw
+  annotations:
+    k8s.v1.cni.cncf.io/networks: rdma-ipvlan-0,rdma-ipvlan-1,rdma-ipvlan-2,rdma-ipvlan-3,rdma-ipvlan-4,rdma-ipvlan-5,rdma-ipvlan-6,rdma-ipvlan-7,rdma-ipvlan-8,rdma-ipvlan-9,rdma-ipvlan-10,rdma-ipvlan-11,rdma-ipvlan-12,rdma-ipvlan-13,rdma-ipvlan-14,rdma-ipvlan-15
+spec:
+  serviceAccountName: rdma-ipvlan-write-bw
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector:
+    node.kubernetes.io/instance-type: BM.GPU.B300.8
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: rdma-ipvlan-write-bw
+          topologyKey: kubernetes.io/hostname
+  volumes:
+    - name: tools
+      configMap:
+        name: rdma-ipvlan-tools
+        defaultMode: 0555
+    - name: scripts
+      configMap:
+        name: rdma-ipvlan-write-bw
+        defaultMode: 0555
+  containers:
+    - name: server
+      image: iad.ocir.io/idxzjcdglx2s/nccl-tests:cuda-13.4.1-ubuntu-24.04-nccl-2.32.3-100526.0
+      command: ["/scripts/server.sh"]
+      securityContext:
+        capabilities:
+          add: ["IPC_LOCK"]
+      volumeMounts:
+        - name: tools
+          mountPath: /opt/rdma-ipvlan
+          readOnly: true
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+      resources:
+        requests:
+          cpu: "8"
+          memory: 2Gi
+        limits:
+          nvidia.com/hostdev: 16

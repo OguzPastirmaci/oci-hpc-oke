@@ -14,6 +14,40 @@ The RDMA network interfaces (`rdma0` to `rdma15`) stay in the host network names
 
 An IPvlan L2 interface on a rail uses the MAC address of the rail and gets its own IP address. The interface is in the pod network namespace. The kernel adds a RoCE GID for its address on the RDMA device of the rail, and the pod can use that GID.
 
+## Files and shapes
+
+`values.yaml` does not depend on the shape. Each shape folder holds the other files:
+
+| Folder | Status | Rail addresses |
+|---|---|---|
+| `BM.GPU4.8` | Tested. See [Tested environment](#tested-environment). | IPv4. Each IPvlan interface gets an IPv4 address from an NVIDIA IPAM pool inside the rail subnet. |
+| `BM.GPU.B300.8` | Not tested. | IPv6. Each node has its own routed `/64` on each rail, assigned by the rail router (SLAAC). See [BM.GPU.B300.8 design](#bmgpub3008-design). |
+
+Each shape folder contains:
+
+- `nic-cluster-policy.yaml`: the device plugin for the 16 RDMA PFs of the shape, Multus, the CNI plugins, and NVIDIA IPAM.
+- `ip-pool.yaml`: the NVIDIA IPAM pool for the IPvlan interfaces.
+- `ipvlan-networks.yaml`: 16 networks `rdma-ipvlan-0` to `rdma-ipvlan-15`, one IPvlan interface on each rail.
+- `rdma-ipvlan-tools.yaml`: scripts that find the RDMA device and GID index of each IPvlan interface.
+- `ipvlan-check.yaml`, `ib-write-bw-all-rails.yaml`, `nccl-test.yaml`: the tests.
+
+Use one shape per cluster with this guide. Both shape folders create objects with the same names.
+
+### BM.GPU.B300.8 design
+
+The `BM.GPU.B300.8` files were not tested on B300 hardware. They come from these sources:
+
+- The 16 RDMA PF PCI addresses come from the `bm-gpu-b300-8` policy in `terraform/files/nvidia-network-operator/sriov-network-node-policy.yaml` in this repository.
+- The NCCL settings and the 4 worker nodes come from `manifests/nccl-tests/virtual-functions/mpi-operator/BM.GPU.B300.8.yaml` in this repository.
+- The address design comes from an earlier IPvlan test on `BM.GPU.GB300.4` nodes with IPv6 rails. That test created the IPvlan interfaces with DRANET, not with Multus.
+
+The IPvlan CNI does not start without an IPAM. On IPv6 rails with one routed `/64` for each node, a shared NVIDIA IPAM pool does not route. So the B300 files work this way:
+
+- `ip-pool.yaml` gives each IPvlan interface a placeholder address from `fd01:0:0:100::/112`. This address only lets the IPvlan CNI start. It does not route.
+- The rail router gives each IPvlan interface its routed address and a default route (SLAAC). In the GB300 test, this took 3 to 4 seconds after the pod started.
+- `rail-map.sh` waits for the SLAAC address and uses its GID. It ignores the placeholder address.
+- The networks have no `tuning` or `sbr` plugin. The ARP settings are for IPv4, and source routing for the placeholder address is not useful.
+
 ## Tested environment
 
 | Item | Value |
@@ -27,7 +61,7 @@ An IPvlan L2 interface on a rail uses the MAC address of the rail and gets its o
 | Helm | 3.22.1 |
 | RDMA rails | IPv4, subnet `10.224.0.0/12`, MTU 4220 |
 
-The guide was not tested on other shapes, other images, or IPv6 RDMA rails. The files in `BM.GPU4.8` use the `BM.GPU4.8` node label and PCI addresses.
+The guide was not tested on other shapes, other images, or IPv6 RDMA rails.
 
 ## RDMA network namespace mode
 
@@ -55,7 +89,7 @@ git clone --branch doca-ipvlan-hostdev https://github.com/OguzPastirmaci/oci-hpc
 cd oci-hpc-oke/manifests/nvidia-network-operator/ipvlan-hostdev
 ```
 
-Set `SHAPE` to the shape of your GPU nodes. Only `BM.GPU4.8` was tested:
+Set `SHAPE` to the shape of your GPU nodes. Use the name of a shape folder, `BM.GPU4.8` or `BM.GPU.B300.8`. Only `BM.GPU4.8` was tested:
 
 ```bash
 SHAPE=BM.GPU4.8
@@ -168,27 +202,29 @@ kubectl apply -f "$SHAPE/nic-cluster-policy.yaml"
 kubectl wait --for=jsonpath='{.status.state}'=ready nicclusterpolicy/nic-cluster-policy --timeout=15m
 ```
 
-The device plugin offers the 16 RDMA PFs of each node as `nvidia.com/hostdev`. The file lists the PFs by PCI address, because the front-end NIC of `BM.GPU4.8` is the same NIC model. Wait until each GPU node offers 16 devices:
+The device plugin offers the 16 RDMA PFs of each node as `nvidia.com/hostdev`. The file lists the PFs by PCI address, because the front-end NIC is also an RDMA device from the same vendor. On `BM.GPU4.8`, it is the same NIC model. Wait until each GPU node offers 16 devices:
 
 ```bash
 kubectl wait nodes -l node.kubernetes.io/instance-type="$SHAPE" --for=jsonpath='{.status.allocatable.nvidia\.com/hostdev}'=16 --timeout=5m
 ```
 
-## Step 7. Choose the IP addresses for the IPvlan interfaces
+## Step 7. Check the IP address range
 
-Each IPvlan interface needs an IP address in the subnet of the RDMA rails. The address must not be used by any host. `$SHAPE/ip-pool.yaml` uses `10.239.255.0/24`.
-
-Show the rail subnet of a GPU node:
+Show the rail addresses of a GPU node:
 
 ```bash
 NODE=$(kubectl get nodes -l node.kubernetes.io/instance-type="$SHAPE" -o jsonpath='{.items[0].metadata.name}')
 ```
 
 ```bash
-kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- chroot /host ip -4 -o addr show dev rdma0
+kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- chroot /host ip -o addr show dev rdma0 scope global
 ```
 
-In the tested environment, all 16 rails use addresses in `10.224.0.0/12`, and `10.239.255.0/24` is inside it. If your rails use another subnet, change `subnet` in `$SHAPE/ip-pool.yaml` to a range inside it.
+### BM.GPU4.8
+
+Each IPvlan interface needs an IPv4 address in the subnet of the RDMA rails. No host may use the address. `BM.GPU4.8/ip-pool.yaml` uses `10.239.255.0/24`.
+
+In the tested environment, all 16 rails use addresses in `10.224.0.0/12`, and `10.239.255.0/24` is inside it. If your rails use another subnet, change `subnet` in `BM.GPU4.8/ip-pool.yaml` to a range inside it.
 
 Make sure that no host answers on any address of the range. The command pings every address of `10.239.255.0/24` on each of the 16 rails. Change the address prefix in the command if you changed the pool:
 
@@ -197,7 +233,15 @@ Make sure that no host answers on any address of the range. The command pings ev
 kubectl debug node/"$NODE" --profile=sysadmin --image=busybox:1.37 --attach --quiet -- chroot /host bash -c 'for rail in $(seq 0 15); do for i in $(seq 1 254); do (ping -c 1 -W 1 -I rdma$rail 10.239.255.$i >/dev/null 2>&1 && echo "in use: rdma$rail 10.239.255.$i") & done; wait; done; echo "check done"'
 ```
 
-The only output line must be `check done`. Delete the debug pods:
+The only output line must be `check done`.
+
+### BM.GPU.B300.8
+
+The rails must show IPv6 addresses. `BM.GPU.B300.8/ip-pool.yaml` uses the placeholder range `fd01:0:0:100::/112`. It must not overlap any rail prefix. On all B300 and GB300 rails seen so far, the rail prefixes started with `fdcd:`. If a rail prefix overlaps the placeholder range, change `subnet` in `BM.GPU.B300.8/ip-pool.yaml`.
+
+### Both shapes
+
+Delete the debug pods:
 
 ```bash
 kubectl get pods -o name | grep node-debugger- | xargs -r kubectl delete
@@ -206,13 +250,13 @@ kubectl get pods -o name | grep node-debugger- | xargs -r kubectl delete
 ## Step 8. Create the IP pool and the networks
 
 ```bash
-kubectl apply -f "$SHAPE/ip-pool.yaml" -f ipvlan-networks.yaml -f rdma-ipvlan-tools.yaml
+kubectl apply -f "$SHAPE/ip-pool.yaml" -f "$SHAPE/ipvlan-networks.yaml" -f "$SHAPE/rdma-ipvlan-tools.yaml"
 ```
 
 These files create:
 
 - The NVIDIA IPAM pool `rdma-ipvlan-pool`. Each GPU node gets a block of 32 addresses.
-- 16 networks `rdma-ipvlan-0` to `rdma-ipvlan-15` in the `default` namespace. Network `rdma-ipvlan-N` creates an IPvlan L2 interface on `rdmaN`. The `tuning` plugin sets the ARP settings of the interface, and the `sbr` plugin adds source routing.
+- 16 networks `rdma-ipvlan-0` to `rdma-ipvlan-15` in the `default` namespace. Network `rdma-ipvlan-N` creates an IPvlan L2 interface on `rdmaN`. On `BM.GPU4.8`, the `tuning` plugin sets the ARP settings of the interface, and the `sbr` plugin adds source routing.
 - The ConfigMap `rdma-ipvlan-tools` with two scripts for the pods. `rail-map.sh` prints the RDMA device and GID index of each IPvlan interface. `with-rails.sh` sets `NCCL_IB_HCA` and `NCCL_IB_GID_INDEX` from that list and runs a command.
 
 ## Step 9. Check the GIDs in a pod
@@ -229,7 +273,7 @@ kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rdma-ipvlan-check --
 kubectl logs rdma-ipvlan-check
 ```
 
-The last line must start with `PASS`. Example output:
+The last line must start with `PASS`. Example output on `BM.GPU4.8`:
 
 ```text
 RDMA netns mode: Y (Y = shared, N = exclusive)
@@ -243,7 +287,7 @@ Host GID index 3 of mlx5_6 in this pod: 0000:0000:0000:0000:0000:0000:0000:0000
 PASS: 16 IPvlan interfaces have a RoCE v2 GID on an allocated RDMA PF (GID index: 5)
 ```
 
-Interface `netN` is the IPvlan interface on `rdma(N-1)`. The GIDs of the host rail addresses still read as zero in the pod.
+Interface `netN` is the IPvlan interface on `rdma(N-1)`. The GIDs of the host rail addresses still read as zero in the pod. On `BM.GPU.B300.8`, the address column shows the SLAAC IPv6 address, and the GID index can differ.
 
 Delete the pod:
 
@@ -269,7 +313,7 @@ kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rdma-ipvlan-write-bw
 kubectl logs rdma-ipvlan-write-bw-client | grep -E '^(Client bandwidth summary|PASS|FAIL|ERROR)'
 ```
 
-The last line must be `PASS: ib_write_bw completed concurrently across all 16 IPvlan rails`. The test ran twice:
+The last line must be `PASS: ib_write_bw completed concurrently across all 16 IPvlan rails`. On `BM.GPU4.8`, the test ran twice:
 
 | Run | Per rail | Total |
 |---|---|---|
@@ -286,7 +330,12 @@ kubectl delete -f "$SHAPE/ib-write-bw-all-rails.yaml"
 
 ### NCCL all_reduce over 16 rails per node
 
-This test needs the MPI Operator. It runs `all_reduce_perf` with 8 GPUs on each of two GPU nodes. `with-rails.sh` sets `NCCL_IB_HCA` and `NCCL_IB_GID_INDEX` in each rank. The 40 GB GPUs cannot hold 16 GiB buffers with validation, so the test stops at 8 GiB.
+This test needs the MPI Operator. It runs `all_reduce_perf` with 8 GPUs on each GPU node. `with-rails.sh` sets `NCCL_IB_HCA` and `NCCL_IB_GID_INDEX` in each rank.
+
+| Shape | Worker nodes | Largest message |
+|---|---|---|
+| `BM.GPU4.8` | 2 | 8 GiB. The 40 GB GPUs cannot hold 16 GiB buffers with validation. |
+| `BM.GPU.B300.8` | 4 | 16 GiB |
 
 ```bash
 kubectl apply -f "$SHAPE/nccl-test.yaml"
@@ -300,7 +349,7 @@ kubectl wait --for=condition=Succeeded mpijob/nccl-test-ipvlan --timeout=20m
 kubectl logs job/nccl-test-ipvlan-launcher | grep -E '^ +[0-9]{9,}|Out of bounds'
 ```
 
-The test results were:
+The results on `BM.GPU4.8` were:
 
 | Size | Bus bandwidth, out of place | Bus bandwidth, in place |
 |---|---|---|
@@ -327,14 +376,14 @@ Use `$SHAPE/nccl-test.yaml` as the example. A pod needs these settings:
 - The pod must run in the `default` namespace, because the networks exist there.
 - For NCCL: `NCCL_IB_HCA` set to the RDMA devices of the IPvlan interfaces, and `NCCL_IB_GID_INDEX` set to their GID index. Mount the ConfigMap `rdma-ipvlan-tools` and start NCCL through `with-rails.sh`, or run `rail-map.sh` to get the values.
 
-In the test, UCX 1.22.0 selected GID index 5 by itself. `ucx_perftest` (`ucp_put_bw`, 1 MiB messages, one rail) reached 11630.75 MB/s between two pods. These UCX commands are not part of this guide.
+On `BM.GPU4.8`, UCX 1.22.0 selected GID index 5 by itself. `ucx_perftest` (`ucp_put_bw`, 1 MiB messages, one rail) reached 11630.75 MB/s between two pods. These UCX commands are not part of this guide.
 
 ## Remove the configuration
 
 Delete the networks, the pool, the scripts, and the device plugin configuration:
 
 ```bash
-kubectl delete -f ipvlan-networks.yaml -f rdma-ipvlan-tools.yaml -f "$SHAPE/ip-pool.yaml" -f "$SHAPE/nic-cluster-policy.yaml"
+kubectl delete -f "$SHAPE/ipvlan-networks.yaml" -f "$SHAPE/rdma-ipvlan-tools.yaml" -f "$SHAPE/ip-pool.yaml" -f "$SHAPE/nic-cluster-policy.yaml"
 ```
 
 ```bash

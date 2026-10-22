@@ -1,0 +1,105 @@
+# Scripts that the test pods use to find the RDMA device and GID index of each IPvlan interface.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rdma-ipvlan-tools
+  namespace: default
+data:
+  rail-map.sh: |
+    #!/bin/bash
+    # Prints one line for each IPvlan interface of this pod (net1, net2, ...):
+    # interface, routed address, RDMA device, index of its RoCE v2 GID.
+    # The routed address is an IPv4 address, or an IPv6 address that the rail
+    # router assigned with SLAAC. The NVIDIA IPAM placeholder address is ignored.
+    set -u
+
+    # Prints an address in the format of /sys/class/infiniband/<dev>/ports/1/gids/<index>.
+    to_gid() {
+      local addr=$1 left right g gid=""
+      local -a l=() r=() groups=()
+      if [[ $addr != *:* ]]; then
+        IFS=. read -r o1 o2 o3 o4 <<<"$addr"
+        printf '0000:0000:0000:0000:0000:ffff:%02x%02x:%02x%02x\n' "$o1" "$o2" "$o3" "$o4"
+        return
+      fi
+      if [[ $addr == *::* ]]; then
+        left=${addr%%::*}
+        right=${addr#*::}
+        [ -n "$left" ] && IFS=: read -r -a l <<<"$left"
+        [ -n "$right" ] && IFS=: read -r -a r <<<"$right"
+        groups=("${l[@]}")
+        for ((i = ${#l[@]} + ${#r[@]}; i < 8; i++)); do groups+=(0); done
+        groups+=("${r[@]}")
+      else
+        IFS=: read -r -a groups <<<"$addr"
+      fi
+      for g in "${groups[@]}"; do gid+=$(printf '%04x:' "0x$g"); done
+      echo "${gid%:}"
+    }
+
+    # Prints the routed addresses of an interface: IPv4, and IPv6 from SLAAC.
+    routed_addresses() {
+      ip -4 -o addr show dev "$1" | awk '{ split($4, a, "/"); print a[1] }'
+      ip -6 -o addr show dev "$1" scope global dynamic -temporary -tentative | awk '{ split($4, a, "/"); print a[1] }'
+    }
+
+    map_once() {
+      local -A want_iface=() want_addr=() found_dev=() found_idx=() found_addr=()
+      local path dev f ndev idx gid_type gid iface addr key
+      for path in /sys/class/net/net*; do
+        iface=${path##*/}
+        while read -r addr; do
+          [ -n "$addr" ] || continue
+          key=$(to_gid "$addr")
+          want_iface[$key]=$iface
+          want_addr[$key]=$addr
+        done < <(routed_addresses "$iface")
+      done
+      for path in /sys/class/infiniband/*; do
+        dev=${path##*/}
+        for f in "$path"/ports/1/gid_attrs/ndevs/*; do
+          # The read fails for empty entries and for interfaces in other network namespaces.
+          { read -r ndev < "$f"; } 2>/dev/null || continue
+          case "$ndev" in net[0-9]*) ;; *) continue ;; esac
+          idx=${f##*/}
+          { read -r gid_type < "$path/ports/1/gid_attrs/types/$idx"; } 2>/dev/null || continue
+          [ "$gid_type" = "RoCE v2" ] || continue
+          read -r gid < "$path/ports/1/gids/$idx"
+          [ "${want_iface[$gid]:-}" = "$ndev" ] || continue
+          found_dev[$ndev]=$dev
+          found_idx[$ndev]=$idx
+          found_addr[$ndev]=${want_addr[$gid]}
+        done
+      done
+      for path in /sys/class/net/net*; do
+        echo "${path##*/}"
+      done | sort -V | while read -r iface; do
+        echo "$iface ${found_addr[$iface]:-none} ${found_dev[$iface]:-none} ${found_idx[$iface]:-none}"
+      done
+    }
+
+    # A SLAAC address can need a few seconds after the pod starts.
+    for _ in $(seq 1 60); do
+      map=$(map_once)
+      grep -q none <<<"$map" || break
+      sleep 1
+    done
+    echo "$map"
+  with-rails.sh: |
+    #!/bin/bash
+    # Sets NCCL_IB_HCA and NCCL_IB_GID_INDEX from the IPvlan interfaces of this pod, then runs the command.
+    set -euo pipefail
+    map=$(/opt/rdma-ipvlan/rail-map.sh)
+    if grep -q none <<<"$map"; then
+      echo "ERROR: an IPvlan interface has no address or no RoCE v2 GID:" >&2
+      echo "$map" >&2
+      exit 1
+    fi
+    NCCL_IB_HCA="=$(awk '{print $3}' <<<"$map" | paste -sd, -)"
+    indexes=$(awk '{print $4}' <<<"$map" | sort -u)
+    if [ "$(wc -l <<<"$indexes")" -ne 1 ]; then
+      echo "ERROR: the GID index is not the same on all rails: $(echo "$indexes" | paste -sd' ' -)" >&2
+      exit 1
+    fi
+    export NCCL_IB_HCA NCCL_IB_GID_INDEX=$indexes
+    exec "$@"
