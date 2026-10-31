@@ -69,6 +69,14 @@ else
   echo "$md_device already initialized" >&2
 fi
 
+# OCI soft reboots press the ACPI power key, and udisksd blocks it during an md sync.
+# md saves the sync progress on a clean stop, so the power key can ignore the lock.
+if [[ $level != 0 ]]; then
+  mkdir -p /etc/systemd/logind.conf.d
+  printf '[Login]\nPowerKeyIgnoreInhibited=yes\n' > /etc/systemd/logind.conf.d/90-oke-power-key.conf
+  systemctl kill -s HUP systemd-logind || echo "Could not reload systemd-logind" >&2
+fi
+
 if ! tune2fs -l "$md_device" &>/dev/null; then
   echo "Formatting '$md_device'" >&2
   mkfs.ext4 -I 512 -b $((bs*1024)) -E stride=${stride},stripe-width=${stripe} -O dir_index -m 1 -F "$md_device"
