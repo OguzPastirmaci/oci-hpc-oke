@@ -13,3 +13,13 @@ sriov-network-operator:
     # The OCI image already sets the NIC firmware for SR-IOV.
     disablePlugins:
       - mellanox
+
+operator:
+  # The chart default (128Mi) ran out of memory on a cluster with 104 nodes. The pod used about 143Mi there.
+  resources:
+    requests:
+      cpu: 5m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

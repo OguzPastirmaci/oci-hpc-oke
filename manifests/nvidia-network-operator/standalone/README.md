@@ -17,7 +17,7 @@ The files in this directory do not depend on the shape. Each shape folder holds 
 | Folder | Status |
 |---|---|
 | `BM.GPU4.8` | Tested. See [Tested environment](#tested-environment). |
-| `BM.GPU.B300.8` | Not tested. The PCI addresses and the MTU come from `terraform/files/nvidia-network-operator/sriov-network-node-policy.yaml` in this repository. The NCCL settings come from `manifests/nccl-tests/virtual-functions/mpi-operator/BM.GPU.B300.8.yaml`. |
+| `BM.GPU.B300.8` | Tested on IPv6 RDMA rails. The files do not work there as written. See [BM.GPU.B300.8 results](#bmgpub3008-results). The PCI addresses and the MTU come from `terraform/files/nvidia-network-operator/sriov-network-node-policy.yaml` in this repository. The NCCL settings come from `manifests/nccl-tests/virtual-functions/mpi-operator/BM.GPU.B300.8.yaml`. |
 
 Each shape folder contains:
 
@@ -25,7 +25,18 @@ Each shape folder contains:
 - `sriov-network-pool-config.yaml`: the operator configures one node of the shape at a time.
 - `vf-check.yaml`, `ib-write-bw-all-vfs.yaml`, `nccl-test.yaml`: the tests.
 
-The IP pool and the networks in this directory use IPv4 addresses. They were tested only on IPv4 RDMA rails.
+The IP pool and the networks in this directory use IPv4 addresses. They work only on IPv4 RDMA rails.
+
+### BM.GPU.B300.8 results
+
+The B300 files were tested on two clusters with 16 IPv6 RDMA rails per node. Each node has its own routed `/64` on each rail, assigned by the rail router (SLAAC).
+
+- The operator created the 16 VFs on each node. `vf-check.yaml` passed in both RDMA modes.
+- `ib_write_bw` and NCCL failed. The VF IPv4 addresses from `ip-pool.yaml` do not route on these rails.
+- A test network with an IPv6 placeholder pool, as in the IPvlan guide, gave each VF its SLAAC address and GID. Queue pair setup with that GID passed. Then `ib_write_bw` failed with `transport retry counter exceeded`.
+- NIC counters showed that the VF frames left the NIC port of the sender but did not reach the NIC port of the receiver. The PF on the same rail delivered all frames. So the tested fabric drops frames from the VF MAC addresses. The DOCA-OFED GID check does not cause it.
+
+For RDMA pods on `BM.GPU.B300.8`, use the guide in `../ipvlan-hostdev`. IPvlan interfaces use the PF MAC address. VFs on a fabric that accepts VF MAC addresses were not tested.
 
 ## Tested environment
 
@@ -40,7 +51,7 @@ The IP pool and the networks in this directory use IPv4 addresses. They were tes
 | Helm | 3.22.1 |
 | RDMA rails | IPv4, MTU 4220 |
 
-The guide was not tested on other shapes, other images, or IPv6 RDMA rails.
+This is the environment of the passing tests. The `BM.GPU.B300.8` tests used kernel `6.17.0-1020-oracle`, the same DOCA-OFED version, and NVIDIA Network Operator 26.7.1. The guide was not tested on other shapes or other images.
 
 ## RDMA network namespace modes
 
@@ -177,10 +188,12 @@ helm repo update nvidia
 ```bash
 helm upgrade --install network-operator nvidia/network-operator \
   --namespace nvidia-network-operator --create-namespace \
-  --version 26.7.0 --values values.yaml --wait --timeout 15m
+  --version 26.7.1 --values values.yaml --wait --timeout 15m
 ```
 
 `values.yaml` disables the NFD that the chart includes, because the cluster already runs NFD. It also disables the `mellanox` plugin of the SR-IOV Network Operator. That plugin manages NIC firmware settings. On the tested image, the firmware already allows 127 VFs on each PF (`sriov_totalvfs`).
+
+`values.yaml` also raises the memory limit of the operator pod to 512Mi. With the chart default (128Mi), the operator pod ran out of memory on a cluster with 104 nodes.
 
 Make sure that the SR-IOV Network Operator uses these settings:
 
@@ -426,10 +439,10 @@ kubectl delete namespace nvidia-network-operator
 
 Do not delete `clusterpolicies.nvidia.com` or `nvidiadrivers.nvidia.com`. The GPU Operator uses them.
 
-Remove the node labels that the operator added:
+Remove the node labels that the operator added. The operator adds them to every node with an NVIDIA network adapter, not only to the GPU nodes of the shape:
 
 ```bash
-kubectl label nodes -l node.kubernetes.io/instance-type="$SHAPE" network.nvidia.com/operator.mofed.wait- network.nvidia.com/operator.nic-configuration.wait- sriovnetwork.openshift.io/device-plugin-
+kubectl label nodes -l network.nvidia.com/operator.mofed.wait network.nvidia.com/operator.mofed.wait- network.nvidia.com/operator.nic-configuration.wait- sriovnetwork.openshift.io/device-plugin-
 ```
 
 The operator does not change the RDMA mode back. To restore the original mode, do step 4 with the original `NETNS_MODE` value.
