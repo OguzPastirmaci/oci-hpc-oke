@@ -4,7 +4,7 @@ This guide is for pods that get the RDMA physical functions (PFs) of a GPU node 
 
 ## Why the pod needs its own interface on each rail
 
-The tested OCI HPC image uses NVIDIA DOCA-OFED. The DOCA-OFED RDMA core module (`ib_core`) shows a RoCE GID to a process only when the network interface of that GID is in the network namespace of the process. The upstream Linux kernel does not do this check.
+The tested OCI HPC images use NVIDIA DOCA-OFED. The DOCA-OFED RDMA core module (`ib_core`) shows a RoCE GID to a process only when the network interface of that GID is in the network namespace of the process. The upstream Linux kernel does not do this check.
 
 The RDMA network interfaces (`rdma0` to `rdma15`) stay in the host network namespace. A pod that gets only the `nvidia.com/hostdev` devices fails in the tested environment:
 
@@ -21,7 +21,7 @@ An IPvlan L2 interface on a rail uses the MAC address of the rail and gets its o
 | Folder | Status | Rail addresses |
 |---|---|---|
 | `BM.GPU4.8` | Tested. See [Tested environment](#tested-environment). | IPv4. Each IPvlan interface gets an IPv4 address from an NVIDIA IPAM pool inside the rail subnet. |
-| `BM.GPU.B300.8` | Not tested. | IPv6. Each node has its own routed `/64` on each rail, assigned by the rail router (SLAAC). See [BM.GPU.B300.8 design](#bmgpub3008-design). |
+| `BM.GPU.B300.8` | Tested on a single-stack and a dual-stack cluster. See [Tested environment](#tested-environment). | IPv6. Each node has its own routed `/64` on each rail, assigned by the rail router (SLAAC). See [BM.GPU.B300.8 design](#bmgpub3008-design). |
 
 Each shape folder contains:
 
@@ -35,7 +35,7 @@ Use one shape per cluster with this guide. Both shape folders create objects wit
 
 ### BM.GPU.B300.8 design
 
-The `BM.GPU.B300.8` files were not tested on B300 hardware. They come from these sources:
+The `BM.GPU.B300.8` files come from these sources:
 
 - The 16 RDMA PF PCI addresses come from the `bm-gpu-b300-8` policy in `terraform/files/nvidia-network-operator/sriov-network-node-policy.yaml` in this repository.
 - The NCCL settings and the 4 worker nodes come from `manifests/nccl-tests/virtual-functions/mpi-operator/BM.GPU.B300.8.yaml` in this repository.
@@ -43,31 +43,32 @@ The `BM.GPU.B300.8` files were not tested on B300 hardware. They come from these
 
 The IPvlan CNI does not start without an IPAM. On IPv6 rails with one routed `/64` for each node, a shared NVIDIA IPAM pool does not route. So the B300 files work this way:
 
-- `ip-pool.yaml` gives each IPvlan interface a placeholder address from `fd01:0:0:100::/112`. This address only lets the IPvlan CNI start. It does not route.
-- The rail router gives each IPvlan interface its routed address and a default route (SLAAC). In the GB300 test, this took 3 to 4 seconds after the pod started.
+- `ip-pool.yaml` gives each IPvlan interface a placeholder address from `fd01:0:0:100::/112`. This address lets the IPvlan CNI start. It does not route.
+- The placeholder address also makes the CNI enable IPv6 on the interface. On a cluster with an IPv4 pod network, pods have IPv6 turned off. Without the placeholder address, the interface gets no SLAAC address.
+- The rail router gives each IPvlan interface its routed address and a default route (SLAAC).
 - `rail-map.sh` waits for the SLAAC address and uses its GID. It ignores the placeholder address.
+- `with-rails.sh` sets `UCX_IB_GID_INDEX` to the GID index of the SLAAC address. By itself, UCX picks the GID of the placeholder address, and the connection fails with `Endpoint timeout`.
 - The networks have no `tuning` or `sbr` plugin. The ARP settings are for IPv4, and source routing for the placeholder address is not useful.
 
 ## Tested environment
 
-| Item | Value |
-|---|---|
-| Shape | `BM.GPU4.8`, 2 nodes, 16 RDMA rails per node |
-| Image | `Canonical-Ubuntu-24.04-2026.09.18-0-KERNEL-ORACLE-6.14-DOCA-OFED-3.5.0-GPU-595-OPEN-CUDA-13.2-2026.09.23-0` |
-| Kernel | `6.14.0-1018-oracle` |
-| DOCA-OFED | 3.5.0 (`ofed_info -s`: `OFED-internal-26.07-0.7.7`) |
-| Kubernetes | OKE v1.36.4 |
-| NVIDIA Network Operator | 26.7.0 |
-| Helm | 3.22.1 |
-| RDMA rails | IPv4, subnet `10.224.0.0/12`, MTU 4220 |
+| Item | `BM.GPU4.8` | `BM.GPU.B300.8` |
+|---|---|---|
+| Nodes | 2, 16 RDMA rails per node | 16 and 101 on a cluster with an IPv4 pod network, 8 on a cluster with an IPv4 and IPv6 pod network. 16 RDMA rails per node |
+| Image | `Canonical-Ubuntu-24.04-2026.09.18-0-KERNEL-ORACLE-6.14-DOCA-OFED-3.5.0-GPU-595-OPEN-CUDA-13.2-2026.09.23-0` | OCI HPC image with kernel 6.17 and DOCA-OFED 3.5.0 |
+| Kernel | `6.14.0-1018-oracle` | `6.17.0-1020-oracle` |
+| DOCA-OFED | 3.5.0 (`ofed_info -s`: `OFED-internal-26.07-0.7.7`) | 3.5.0 (`OFED-internal-26.07-0.7.7`) |
+| Kubernetes | OKE v1.36.4 | OKE v1.36.4 |
+| NVIDIA Network Operator | 26.7.0 | 26.7.1 |
+| RDMA rails | IPv4, subnet `10.224.0.0/12`, MTU 4220 | IPv6 only, SLAAC, MTU 9000 |
 
-The guide was not tested on other shapes, other images, or IPv6 RDMA rails.
+The guide was not tested on other shapes or other images.
 
 ## RDMA network namespace mode
 
-This setup needs the shared RDMA network namespace mode (`netns_mode=1`). The tested image uses the exclusive mode by default.
+This setup needs the shared RDMA network namespace mode (`netns_mode=1`). The tested `BM.GPU4.8` image uses the exclusive mode by default. The tested `BM.GPU.B300.8` nodes used the shared mode.
 
-In exclusive mode, a pod with the `nvidia.com/hostdev` devices gets the `/dev/infiniband` character devices, but no RDMA device is visible in `/sys/class/infiniband`. `ibv_devices` lists no device.
+In exclusive mode, a pod with the `nvidia.com/hostdev` devices gets the `/dev/infiniband` character devices, but no RDMA device is visible in `/sys/class/infiniband`. `ibv_devices` lists no device, and the GID check in step 9 fails. This was tested on both shapes.
 
 This guide changes the mode with a reboot of each GPU node.
 
@@ -89,7 +90,7 @@ git clone --branch doca-ipvlan-hostdev https://github.com/OguzPastirmaci/oci-hpc
 cd oci-hpc-oke/manifests/nvidia-network-operator/ipvlan-hostdev
 ```
 
-Set `SHAPE` to the shape of your GPU nodes. Use the name of a shape folder, `BM.GPU4.8` or `BM.GPU.B300.8`. Only `BM.GPU4.8` was tested:
+Set `SHAPE` to the shape of your GPU nodes. Use the name of a shape folder, `BM.GPU4.8` or `BM.GPU.B300.8`:
 
 ```bash
 SHAPE=BM.GPU4.8
@@ -187,10 +188,12 @@ helm repo update nvidia
 ```bash
 helm upgrade --install network-operator nvidia/network-operator \
   --namespace nvidia-network-operator --create-namespace \
-  --version 26.7.0 --values values.yaml --wait --timeout 15m
+  --version 26.7.1 --values values.yaml --wait --timeout 15m
 ```
 
 `values.yaml` disables the NFD that the chart includes, because the cluster already runs NFD. It also disables the SR-IOV Network Operator, because this setup uses the PFs.
+
+`values.yaml` also raises the memory limit of the operator pod to 512Mi. With the chart default (128Mi), the operator pod ran out of memory on a cluster with 104 nodes. It stopped while it labelled the nodes, and the device plugin started on only 55 of the 101 GPU nodes.
 
 ## Step 6. Deploy the device plugin, Multus, the CNI plugins, and NVIDIA IPAM
 
@@ -287,7 +290,13 @@ Host GID index 3 of mlx5_6 in this pod: 0000:0000:0000:0000:0000:0000:0000:0000
 PASS: 16 IPvlan interfaces have a RoCE v2 GID on an allocated RDMA PF (GID index: 5)
 ```
 
-Interface `netN` is the IPvlan interface on `rdma(N-1)`. The GIDs of the host rail addresses still read as zero in the pod. On `BM.GPU.B300.8`, the address column shows the SLAAC IPv6 address, and the GID index can differ.
+Interface `netN` is the IPvlan interface on `rdma(N-1)`. The GIDs of the host rail addresses still read as zero in the pod.
+
+On `BM.GPU.B300.8`, the address column shows the SLAAC IPv6 address. The GID index was 9 on all rails in the tests. For example:
+
+```text
+net1 fdcd:0:26e7:c03b:7425:5400:174:346 mlx5_0 9
+```
 
 Delete the pod:
 
@@ -319,6 +328,8 @@ The last line must be `PASS: ib_write_bw completed concurrently across all 16 IP
 |---|---|---|
 | 1 | 41.72 to 56.28 Gbit/s | 804.86 Gbit/s |
 | 2, from a fresh clone of this guide | 38.04 to 51.64 Gbit/s | 746.03 Gbit/s |
+
+On `BM.GPU.B300.8`, the totals were 2198.02 to 3147.86 Gbit/s in four runs, with 100 to 233 Gbit/s per rail. A `hostNetwork` pod with the same test image on the same two nodes gave a similar result (2718.24 Gbit/s). The host's own `ib_write_bw` (perftest 6.30) gave 3242 to 3721 Gbit/s. So the lower result comes from the test image or the pod, not from IPvlan.
 
 The 16 rails run at the same time, and the results change from run to run.
 
@@ -358,6 +369,16 @@ The results on `BM.GPU4.8` were:
 
 These results come from a run that followed this guide from a fresh clone. The test had 0 wrong values.
 
+The results on `BM.GPU.B300.8` with 4 worker nodes, as in `nccl-test.yaml`, were:
+
+| Size | Cluster with an IPv4 pod network | Cluster with an IPv4 and IPv6 pod network |
+|---|---|---|
+| 4 GiB | 758.36 / 761.69 GB/s | 769.63 / 769.21 GB/s |
+| 8 GiB | 770.51 / 773.90 GB/s | 773.55 / 773.35 GB/s |
+| 16 GiB | 767.52 / 775.01 GB/s | 773.53 / 773.89 GB/s |
+
+The values are bus bandwidth, out of place / in place, with 0 wrong values. The same test with `hostNetwork: true` on 4 nodes gave 773.70 / 769.54 GB/s at 8 GiB. Runs on 2, 8 and 16 nodes were also within 1.5% of `hostNetwork: true` on the same nodes. On 95 nodes, IPvlan and `hostNetwork: true` gave the same bus bandwidth (93.55 and 93.91 GB/s out of place at 8 GiB). Both were much lower than on 16 nodes, so IPvlan was not the limit.
+
 The log shows `NCCL WARN NET/MLX5: Call to mlx5dv_devx_general_cmd failed with error Remote I/O error` once for each rank. The same message comes from the same test image on the host PFs with `hostNetwork: true`. It did not change the result.
 
 Delete the test:
@@ -376,7 +397,9 @@ Use `$SHAPE/nccl-test.yaml` as the example. A pod needs these settings:
 - The pod must run in the `default` namespace, because the networks exist there.
 - For NCCL: `NCCL_IB_HCA` set to the RDMA devices of the IPvlan interfaces, and `NCCL_IB_GID_INDEX` set to their GID index. Mount the ConfigMap `rdma-ipvlan-tools` and start NCCL through `with-rails.sh`, or run `rail-map.sh` to get the values.
 
-On `BM.GPU4.8`, UCX 1.22.0 selected GID index 5 by itself. `ucx_perftest` (`ucp_put_bw`, 1 MiB messages, one rail) reached 11630.75 MB/s between two pods. These UCX commands are not part of this guide.
+- For UCX (and NIXL, which uses UCX) on `BM.GPU.B300.8`: `UCX_IB_GID_INDEX` set to the GID index of the IPvlan interfaces. `with-rails.sh` sets it. Without it, UCX picks the GID of the placeholder address, and the connection fails with `Endpoint timeout`.
+
+On `BM.GPU4.8`, UCX 1.22.0 selected GID index 5 by itself. `ucx_perftest` (`ucp_put_bw`, 1 MiB messages, one rail) reached 11630.75 MB/s between two pods. On `BM.GPU.B300.8` with `UCX_IB_GID_INDEX=9`, the same test reached about 45600 MB/s (`rc_x` and `rc_v`), the same as on the host. These UCX commands are not part of this guide. NIXL was not tested.
 
 ## Remove the configuration
 
@@ -406,10 +429,10 @@ kubectl delete namespace nvidia-network-operator
 
 Do not delete `clusterpolicies.nvidia.com` or `nvidiadrivers.nvidia.com`. The GPU Operator uses them.
 
-Remove the node labels that the operator added:
+Remove the node labels that the operator added. The operator adds them to every node with an NVIDIA network adapter, not only to the GPU nodes of the shape:
 
 ```bash
-kubectl label nodes -l node.kubernetes.io/instance-type="$SHAPE" network.nvidia.com/operator.mofed.wait- network.nvidia.com/operator.nic-configuration.wait-
+kubectl label nodes -l network.nvidia.com/operator.mofed.wait network.nvidia.com/operator.mofed.wait- network.nvidia.com/operator.nic-configuration.wait-
 ```
 
 The operator does not change the RDMA mode back. To restore the exclusive mode, do step 4 with `NETNS_MODE=0`.

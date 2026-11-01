@@ -87,7 +87,8 @@ data:
     echo "$map"
   with-rails.sh: |
     #!/bin/bash
-    # Sets NCCL_IB_HCA and NCCL_IB_GID_INDEX from the IPvlan interfaces of this pod, then runs the command.
+    # Sets NCCL_IB_HCA, NCCL_IB_GID_INDEX and UCX_IB_GID_INDEX from the IPvlan interfaces of this pod, then runs the command.
+    # UCX needs the index, because by itself it picks the GID of the placeholder address, which does not route.
     set -euo pipefail
     map=$(/opt/rdma-ipvlan/rail-map.sh)
     if grep -q none <<<"$map"; then
@@ -101,5 +102,5 @@ data:
       echo "ERROR: the GID index is not the same on all rails: $(echo "$indexes" | paste -sd' ' -)" >&2
       exit 1
     fi
-    export NCCL_IB_HCA NCCL_IB_GID_INDEX=$indexes
+    export NCCL_IB_HCA NCCL_IB_GID_INDEX=$indexes UCX_IB_GID_INDEX=$indexes
     exec "$@"

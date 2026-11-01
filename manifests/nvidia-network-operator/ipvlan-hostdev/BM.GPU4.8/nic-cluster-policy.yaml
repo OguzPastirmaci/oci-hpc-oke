@@ -7,7 +7,7 @@ spec:
   sriovDevicePlugin:
     image: sriov-network-device-plugin
     repository: nvcr.io/nvidia/mellanox
-    version: network-operator-v26.7.0
+    version: network-operator-v26.7.1
     # Exposes the 16 RDMA PFs of each BM.GPU4.8 node as nvidia.com/hostdev.
     # The front-end NIC (0000:2d:00.0 and .1) is the same model, so the PFs are listed by PCI address.
     config: |
@@ -32,14 +32,14 @@ spec:
   nvIpam:
     image: nvidia-k8s-ipam
     repository: nvcr.io/nvidia/mellanox
-    version: network-operator-v26.7.0
+    version: network-operator-v26.7.1
     enableWebhook: false
   secondaryNetwork:
     cniPlugins:
       image: plugins
       repository: nvcr.io/nvidia/mellanox
-      version: network-operator-v26.7.0
+      version: network-operator-v26.7.1
     multus:
       image: multus-cni
       repository: nvcr.io/nvidia/mellanox
-      version: network-operator-v26.7.0
+      version: network-operator-v26.7.1

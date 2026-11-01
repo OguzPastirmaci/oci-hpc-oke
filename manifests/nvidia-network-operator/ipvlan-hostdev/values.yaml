@@ -5,3 +5,13 @@ nfd:
 # This setup uses the PFs directly, so it does not need the SR-IOV Network Operator.
 sriovNetworkOperator:
   enabled: false
+
+operator:
+  # The chart default (128Mi) ran out of memory on a cluster with 104 nodes. The pod used about 143Mi there.
+  resources:
+    requests:
+      cpu: 5m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
