@@ -55,12 +55,14 @@ The IPvlan CNI does not start without an IPAM. On IPv6 rails with one routed `/6
 | Item | `BM.GPU4.8` | `BM.GPU.B300.8` |
 |---|---|---|
 | Nodes | 2, 16 RDMA rails per node | 16 and 101 on a cluster with an IPv4 pod network, 8 on a cluster with an IPv4 and IPv6 pod network. 16 RDMA rails per node |
-| Image | `Canonical-Ubuntu-24.04-2026.09.18-0-KERNEL-ORACLE-6.14-DOCA-OFED-3.5.0-GPU-595-OPEN-CUDA-13.2-2026.09.23-0` | OCI HPC image with kernel 6.17 and DOCA-OFED 3.5.0 |
+| Image | `Canonical-Ubuntu-24.04-2026.09.18-0-KERNEL-ORACLE-6.14-DOCA-OFED-3.5.0-GPU-595-OPEN-CUDA-13.2-2026.09.23-0` | `Canonical-Ubuntu-24.04-2026.09.18-0-KERNEL-ORACLE-6.17-DOCA-OFED-3.5.0-GPU-595-OPEN-CUDA-13.2-2026.10.19-0` |
 | Kernel | `6.14.0-1018-oracle` | `6.17.0-1020-oracle` |
 | DOCA-OFED | 3.5.0 (`ofed_info -s`: `OFED-internal-26.07-0.7.7`) | 3.5.0 (`OFED-internal-26.07-0.7.7`) |
 | Kubernetes | OKE v1.36.4 | OKE v1.36.4 |
 | NVIDIA Network Operator | 26.7.0 | 26.7.1 |
 | RDMA rails | IPv4, subnet `10.224.0.0/12`, MTU 4220 | IPv6 only, SLAAC, MTU 9000 |
+
+The guide installs NVIDIA Network Operator 26.7.1. On `BM.GPU4.8`, only 26.7.0 was tested.
 
 The guide was not tested on other shapes or other images.
 
@@ -260,7 +262,7 @@ These files create:
 
 - The NVIDIA IPAM pool `rdma-ipvlan-pool`. Each GPU node gets a block of 32 addresses.
 - 16 networks `rdma-ipvlan-0` to `rdma-ipvlan-15` in the `default` namespace. Network `rdma-ipvlan-N` creates an IPvlan L2 interface on `rdmaN`. On `BM.GPU4.8`, the `tuning` plugin sets the ARP settings of the interface, and the `sbr` plugin adds source routing.
-- The ConfigMap `rdma-ipvlan-tools` with two scripts for the pods. `rail-map.sh` prints the RDMA device and GID index of each IPvlan interface. `with-rails.sh` sets `NCCL_IB_HCA` and `NCCL_IB_GID_INDEX` from that list and runs a command.
+- The ConfigMap `rdma-ipvlan-tools` with two scripts for the pods. `rail-map.sh` prints the RDMA device and GID index of each IPvlan interface. `with-rails.sh` sets `NCCL_IB_HCA` and `NCCL_IB_GID_INDEX` from that list and runs a command. On `BM.GPU.B300.8`, it also sets `UCX_IB_GID_INDEX`.
 
 ## Step 9. Check the GIDs in a pod
 
@@ -341,7 +343,7 @@ kubectl delete -f "$SHAPE/ib-write-bw-all-rails.yaml"
 
 ### NCCL all_reduce over 16 rails per node
 
-This test needs the MPI Operator. It runs `all_reduce_perf` with 8 GPUs on each GPU node. `with-rails.sh` sets `NCCL_IB_HCA` and `NCCL_IB_GID_INDEX` in each rank.
+This test needs the MPI Operator. It runs `all_reduce_perf` with 8 GPUs on each GPU node. `with-rails.sh` sets `NCCL_IB_HCA` and `NCCL_IB_GID_INDEX` in each rank. On `BM.GPU.B300.8`, it also sets `UCX_IB_GID_INDEX`.
 
 | Shape | Worker nodes | Largest message |
 |---|---|---|
