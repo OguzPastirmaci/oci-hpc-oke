@@ -51,7 +51,11 @@ For RDMA pods on `BM.GPU.B300.8`, use the guide in `../ipvlan-hostdev`. IPvlan i
 | Helm | 3.22.1 |
 | RDMA rails | IPv4, MTU 4220 |
 
-This is the environment of the passing tests. The `BM.GPU.B300.8` tests used kernel `6.17.0-1020-oracle`, the same DOCA-OFED version, and NVIDIA Network Operator 26.7.1. The guide was not tested on other shapes or other images.
+This is the environment of the passing tests. The `BM.GPU.B300.8` tests used the image `Canonical-Ubuntu-24.04-2026.09.18-0-KERNEL-ORACLE-6.17-DOCA-OFED-3.5.0-GPU-595-OPEN-CUDA-13.2-2026.10.19-0` with kernel `6.17.0-1020-oracle`, the same DOCA-OFED version, and NVIDIA Network Operator 26.7.1.
+
+The guide installs NVIDIA Network Operator 26.7.1. On `BM.GPU4.8`, only 26.7.0 was tested.
+
+The guide was not tested on other shapes or other images.
 
 ## RDMA network namespace modes
 
