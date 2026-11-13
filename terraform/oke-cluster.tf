@@ -327,8 +327,8 @@ data "oci_core_image" "operator_selected" {
 }
 
 module "oke" {
-  source  = "oracle-terraform-modules/oke/oci"
-  version = "5.5.2"
+  # Module 5.5.2 plus a fix that allows Ubuntu 26.04 images with the stack's own bootstrap.
+  source = "git::https://github.com/OguzPastirmaci/terraform-oci-oke.git?ref=8b4e7f1ccf210483912176dfe924594b5bacd2f4"
 
   providers = { oci.home = oci.home }
 
