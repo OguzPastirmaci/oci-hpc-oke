@@ -176,9 +176,31 @@ case "$ID" in
 
             # OKE publishes no packages for Ubuntu releases after 24.04, so use the 24.04 (noble) ones.
             oke_repo_codename="$VERSION_CODENAME"
+            oke_extra_packages=()
             if version_ge "${VERSION_ID-}" "24.10"; then
                 echo "[Ubuntu] No OKE packages for $VERSION_CODENAME, using the noble packages"
                 oke_repo_codename="noble"
+
+                # The noble cri-o needs libgpgme.so.11, which newer releases do not ship.
+                # Add the noble archive, pinned so that only libgpgme11t64 and libassuan0 come from it.
+                ubuntu_mirror=$(awk '/^URIs:/ {print $2; exit}' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null) || true
+                tee /etc/apt/sources.list.d/oke-noble-libs.sources > /dev/null <<EOF
+Types: deb
+URIs: ${ubuntu_mirror:-http://archive.ubuntu.com/ubuntu}
+Suites: noble noble-updates
+Components: main
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+                tee /etc/apt/preferences.d/oke-noble-libs > /dev/null <<'EOF'
+Package: *
+Pin: release n=noble
+Pin-Priority: -1
+
+Package: libgpgme11t64 libassuan0
+Pin: release n=noble
+Pin-Priority: 500
+EOF
+                oke_extra_packages=(libgpgme11t64)
             fi
 
             LOCAL_REPO_PATH="/opt/oke-node-client-packages/ubuntu-$oke_repo_codename/kubernetes-$oke_package_repo_version"
@@ -202,7 +224,7 @@ EOF
                     sleep 1
                 done
                 apt-get -y update || true
-                apt-get -y install "$oke_package_name"
+                apt-get -y install "$oke_package_name" "${oke_extra_packages[@]}"
             }
 
             use_remote_repo=1
