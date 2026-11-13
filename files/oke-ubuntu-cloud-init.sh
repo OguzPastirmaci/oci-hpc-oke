@@ -174,8 +174,15 @@ case "$ID" in
             oke_package_repo_version="${oke_package_version:0:4}"
             oke_package_name="oci-oke-node-all-$oke_package_version"
 
-            LOCAL_REPO_PATH="/opt/oke-node-client-packages/ubuntu-$VERSION_CODENAME/kubernetes-$oke_package_repo_version"
-            REMOTE_REPO_URL="https://objectstorage.us-sanjose-1.oraclecloud.com/n/odx-oke/b/okn-repositories/o/prod/ubuntu-$VERSION_CODENAME/kubernetes-$oke_package_repo_version https://odx-oke.objectstorage.us-sanjose-1.oci.customer-oci.com/n/odx-oke/b/okn-repositories/o/prod/ubuntu-$VERSION_CODENAME/kubernetes-$oke_package_repo_version"
+            # OKE publishes no packages for Ubuntu releases after 24.04, so use the 24.04 (noble) ones.
+            oke_repo_codename="$VERSION_CODENAME"
+            if version_ge "${VERSION_ID-}" "24.10"; then
+                echo "[Ubuntu] No OKE packages for $VERSION_CODENAME, using the noble packages"
+                oke_repo_codename="noble"
+            fi
+
+            LOCAL_REPO_PATH="/opt/oke-node-client-packages/ubuntu-$oke_repo_codename/kubernetes-$oke_package_repo_version"
+            REMOTE_REPO_URL="https://objectstorage.us-sanjose-1.oraclecloud.com/n/odx-oke/b/okn-repositories/o/prod/ubuntu-$oke_repo_codename/kubernetes-$oke_package_repo_version https://odx-oke.objectstorage.us-sanjose-1.oci.customer-oci.com/n/odx-oke/b/okn-repositories/o/prod/ubuntu-$oke_repo_codename/kubernetes-$oke_package_repo_version"
 
             write_oke_apt_source() {
                 tee /etc/apt/sources.list.d/oke-node-client.sources > /dev/null <<EOF
