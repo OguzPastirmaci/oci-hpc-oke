@@ -193,11 +193,11 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
                 tee /etc/apt/preferences.d/oke-noble-libs > /dev/null <<'EOF'
 Package: *
-Pin: release n=noble
+Pin: release o=Ubuntu,n=noble
 Pin-Priority: -1
 
 Package: libgpgme11t64 libassuan0
-Pin: release n=noble
+Pin: release o=Ubuntu,n=noble
 Pin-Priority: 500
 EOF
                 oke_extra_packages=(libgpgme11t64)
